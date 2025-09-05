@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:turevskiy.com)",
+      "Bash(mkdir:*)",
+      "Bash(go mod:*)",
+      "Bash(go:*)",
+      "Bash(lsof:*)",
+      "Bash(mv:*)",
+      "Bash(rm:*)",
+      "Bash(curl:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

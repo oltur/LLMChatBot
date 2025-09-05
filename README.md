@@ -1,0 +1,260 @@
+# AI-Powered Turevskiy.com Chatbot
+
+An advanced Go-based chatbot application that provides comprehensive information about Oleksandr Turevskiy through multi-layered web scraping, PDF analysis, and local AI integration using Ollama CodeLlama.
+
+## 🚀 Features
+
+### Core Capabilities
+- **Enhanced Web Scraping** of turevskiy.com with comprehensive metadata extraction
+- **PDF Analysis & Extraction** with intelligent content parsing (CV/Resume)
+- **Local AI Integration** using Ollama CodeLlama for intelligent responses
+- **Multi-layered Content Aggregation** from website + external profiles + first-level links
+- **RESTful API** for chat interactions
+- **Responsive Web Interface** for easy interaction
+
+### Advanced Scraping Features
+- **External Profile Scraping**: Automatically discovers and scrapes professional profiles (GitHub, LinkedIn, GitLab, Medium, Dev.to, StackOverflow, Twitter/X)
+- **First-Level Link Discovery**: Intelligently scrapes relevant pages linked from external profiles
+- **Content Relevance Scoring**: 1-10 relevance system to prioritize high-quality information
+- **Content Type Classification**: Categorizes content as professional, blog, project, technical, or general
+- **Smart Caching System**: 1 hour for web content, 24 hours for PDFs, optimized performance
+
+### AI-Powered Intelligence
+- **Comprehensive Context Provision**: All scraped content provided to Ollama for analysis
+- **Cross-Reference Capability**: AI can correlate information across multiple sources
+- **Source Attribution**: Responses include relevance scores and source citations
+- **Fallback System**: Rule-based responses if AI is unavailable
+
+## 📋 Prerequisites
+
+- **Go 1.21+**
+- **Ollama** installed and running locally
+- **CodeLlama:13b model** pulled in Ollama
+
+### Installing Ollama and CodeLlama
+
+```bash
+# Install Ollama (macOS)
+curl -fsSL https://ollama.com/install.sh | sh
+
+# Pull CodeLlama 13B model
+ollama pull codellama:13b
+
+# Verify installation
+ollama list
+```
+
+## 🛠 Installation
+
+1. **Clone the repository**
+```bash
+git clone <repository-url>
+cd LLMChatBot
+```
+
+2. **Install Go dependencies**
+```bash
+go mod tidy
+```
+
+3. **Build the application**
+```bash
+go build
+```
+
+## 🚦 Usage
+
+### Running the Application
+
+```bash
+# Default configuration (Ollama at localhost:11434, CodeLlama:13b)
+./turevskiy-chatbot
+
+# Custom Ollama configuration
+OLLAMA_URL=http://localhost:11434 OLLAMA_MODEL=codellama:13b ./turevskiy-chatbot
+
+# Custom port
+PORT=8084 ./turevskiy-chatbot
+```
+
+### Web Interface
+
+Navigate to: `http://localhost:8080`
+
+The web interface provides an intuitive chat experience with AI-powered responses.
+
+### API Endpoints
+
+#### Chat Endpoint
+```bash
+POST /chat
+Content-Type: application/json
+
+{
+  "message": "What are his technical skills from GitHub and CV?"
+}
+```
+
+**Response:**
+```json
+{
+  "response": "Based on Oleksandr's CV and GitHub profiles, his technical skills include: [AI-generated comprehensive analysis of skills from multiple sources including CV, GitHub repositories, and linked projects]",
+  "timestamp": "2025-09-05 20:42:37"
+}
+```
+
+#### Health Check
+```bash
+GET /health
+```
+
+## 💬 Query Capabilities
+
+### Basic Information Queries
+- **Professional Background**: "Who is Oleksandr Turevskiy?"
+- **Contact Information**: "How can I contact him?"
+- **Profile Links**: "What are his social profiles?"
+
+### Advanced AI-Powered Queries
+- **Technical Skills**: "What programming languages and technologies does he know?" *(Analyzes CV + GitHub + project links)*
+- **Project Analysis**: "Tell me about his recent projects" *(Cross-references GitHub + linked repositories)*
+- **Career Progression**: "What's his professional experience?" *(Combines CV + LinkedIn + external content)*
+- **Educational Background**: "Tell me about his education" *(Extracts from CV + professional profiles)*
+- **Blog & Articles**: "What has he written about?" *(Analyzes blog posts + Medium articles + linked content)*
+
+### Content Sources Used by AI
+- **Main Website Content** with metadata
+- **CV/Resume PDFs** with extracted skills, experience, education
+- **GitHub Profiles** with repository information
+- **LinkedIn Professional Content** (when accessible)
+- **Blog Posts & Articles** from Medium, Dev.to, personal blogs
+- **First-Level Linked Content** from all external profiles
+- **Cross-Referenced Information** from multiple sources with relevance scoring
+
+## 🏗 Architecture
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Web Scraper   │────│  Content Cache   │────│   AI Service    │
+│  - Main site    │    │  - 1h web cache  │    │  - Ollama       │
+│  - External     │    │  - 24h PDF cache │    │  - CodeLlama    │
+│  - First-level  │    │  - Relevance     │    │  - Local AI     │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+         │                       │                       │
+         └───────────────────────┼───────────────────────┘
+                                 │
+                    ┌─────────────────┐
+                    │   HTTP Server   │
+                    │  - REST API     │
+                    │  - Web UI       │
+                    │  - Health Check │
+                    └─────────────────┘
+```
+
+### File Structure
+- **main.go**: Application entry point and dependency injection
+- **scraper.go**: Multi-layered web scraping with first-level link discovery
+- **ollama_service.go**: Local AI integration with Ollama CodeLlama
+- **pdf_extractor.go**: PDF content extraction and analysis
+- **chatbot.go**: Intelligence routing and response generation
+- **server.go**: HTTP server and API endpoints
+- **static/index.html**: Interactive web interface
+
+## 🔧 Configuration
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PORT` | Server port | `8080` |
+| `OLLAMA_URL` | Ollama API endpoint | `http://localhost:11434` |
+| `OLLAMA_MODEL` | AI model to use | `codellama:13b` |
+
+### Content Scraping Limits
+
+- **First-level links per profile**: 5 (prevents overwhelming data)
+- **Minimum relevance threshold**: 6/10 (ensures quality)
+- **Content size limits**: 2000 chars per profile, 1000 chars per first-level link
+- **Professional platforms monitored**: GitHub, LinkedIn, GitLab, Medium, Dev.to, StackOverflow, Twitter/X
+
+## 📊 Data Flow
+
+1. **Website Scraping**: Extracts turevskiy.com content + metadata
+2. **External Profile Discovery**: Identifies professional links
+3. **Profile Content Extraction**: Scrapes each external profile with enhanced metadata
+4. **First-Level Link Analysis**: Discovers and scores outbound links from profiles
+5. **Selective Deep Scraping**: Scrapes high-relevance (6+) first-level pages
+6. **Content Aggregation**: Compiles all content with source attribution
+7. **AI Processing**: Provides comprehensive context to Ollama CodeLlama
+8. **Intelligent Response**: Generates responses using all available information
+
+## 🚨 Status Indicators
+
+### ✅ Implemented Features
+- Multi-layered web scraping with first-level external page discovery
+- Content relevance scoring and type classification
+- PDF analysis and intelligent content extraction
+- Local Ollama CodeLlama integration
+- Comprehensive content aggregation across all sources
+- RESTful API with enhanced response capabilities
+- Responsive web interface with AI-powered chat
+- Intelligent caching system
+- Cross-source information correlation
+- Fallback to rule-based responses when AI unavailable
+
+### 🔄 AI Integration Status
+- **AI Enabled**: When Ollama is running with CodeLlama:13b
+- **Enhanced Responses**: Comprehensive analysis using all scraped content
+- **Source Attribution**: Responses include relevance and source information
+- **Fallback Available**: Rule-based responses when AI is unavailable
+
+## 🎯 Example Use Cases
+
+**Project Discovery**: "What projects has he worked on recently?"
+*→ AI analyzes GitHub profile + linked repositories + project descriptions*
+
+**Skill Assessment**: "Is he experienced with Go programming?"
+*→ Cross-references CV + GitHub repos + blog posts + technical articles*
+
+**Career Overview**: "Tell me about his professional background"
+*→ Combines CV content + LinkedIn + blog posts + external references*
+
+**Contact & Networking**: "How can I connect with him professionally?"
+*→ Provides contact info + professional profiles with context*
+
+## 🔧 Development Commands
+
+```bash
+# Build
+go build
+
+# Run
+go run main.go
+
+# Test
+go test ./...
+
+# Format code
+go fmt ./...
+
+# Vet code
+go vet ./...
+```
+
+## 📦 Dependencies
+
+- `github.com/gorilla/mux`: HTTP routing and middleware
+- `github.com/PuerkitoBio/goquery`: HTML parsing and CSS selectors
+- `github.com/ledongthuc/pdf`: PDF document parsing and text extraction
+
+## 🤖 AI Model Information
+
+- **Model**: CodeLlama:13b
+- **Provider**: Ollama (local)
+- **Capabilities**: Code analysis, technical content understanding, multi-source information synthesis
+- **Context**: Receives comprehensive content from website + external profiles + first-level links
+- **Response Quality**: Enhanced by relevance scoring and content type classification
+
+---
+
+**Ready for production use with comprehensive AI-powered content analysis and multi-layered web intelligence.**
