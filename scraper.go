@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -10,10 +11,13 @@ import (
 )
 
 type WebScraper struct {
-	client       *http.Client
-	cache        map[string]WebsiteContent
-	pdfExtractor *PDFExtractor
-	pdfCache     map[string]*PDFContent
+	client             *http.Client
+	cache              map[string]WebsiteContent
+	pdfExtractor       *PDFExtractor
+	pdfCache           map[string]*PDFContent
+	fileParser         *FileParser
+	fileCache          map[string]*FileContent
+	allowedUrlPatterns []string
 }
 
 type WebsiteContent struct {
@@ -22,6 +26,7 @@ type WebsiteContent struct {
 	Links         []Link
 	Text          string
 	PDFContent    map[string]*PDFContent
+	FileContent   map[string]*FileContent
 	LinkedContent map[string]*LinkedPageContent
 	Metadata      map[string]string
 	LastUpdated   time.Time
@@ -55,26 +60,68 @@ type Link struct {
 }
 
 func NewWebScraper() *WebScraper {
+	// Parse allowed URL patterns from environment variable
+	allowedPatternsStr := os.Getenv("ALLOWED_SCRAPING_URL_PATTERNS")
+	var allowedUrlPatterns []string
+
+	if allowedPatternsStr != "" {
+		// Split by comma and trim whitespace
+		patterns := strings.Split(allowedPatternsStr, ",")
+		for _, pattern := range patterns {
+			trimmed := strings.TrimSpace(pattern)
+			if trimmed != "" {
+				allowedUrlPatterns = append(allowedUrlPatterns, strings.ToLower(trimmed))
+			}
+		}
+	}
+
 	return &WebScraper{
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		cache:        make(map[string]WebsiteContent),
-		pdfExtractor: NewPDFExtractor(),
-		pdfCache:     make(map[string]*PDFContent),
+		cache:              make(map[string]WebsiteContent),
+		pdfExtractor:       NewPDFExtractor(),
+		pdfCache:           make(map[string]*PDFContent),
+		fileParser:         NewFileParser(),
+		fileCache:          make(map[string]*FileContent),
+		allowedUrlPatterns: allowedUrlPatterns,
 	}
 }
 
-func (w *WebScraper) ScrapeWebsite(url string) (*WebsiteContent, error) {
-	if cached, exists := w.cache[url]; exists {
+func (w *WebScraper) isUrlAllowed(targetUrl string) bool {
+	// If no allowed URL patterns are configured, allow all URLs
+	if len(w.allowedUrlPatterns) == 0 {
+		return true
+	}
+
+	// Normalize the URL for consistent matching
+	normalizedUrl := strings.ToLower(targetUrl)
+
+	// Check if URL matches any of the allowed patterns
+	for _, pattern := range w.allowedUrlPatterns {
+		if strings.Contains(normalizedUrl, pattern) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (w *WebScraper) ScrapeWebsite(targetUrl string) (*WebsiteContent, error) {
+	// Check if the URL is allowed to be scraped
+	if !w.isUrlAllowed(targetUrl) {
+		return nil, fmt.Errorf("URL not allowed for scraping: %s", targetUrl)
+	}
+
+	if cached, exists := w.cache[targetUrl]; exists {
 		if time.Since(cached.LastUpdated) < 1*time.Hour {
 			return &cached, nil
 		}
 	}
 
-	resp, err := w.client.Get(url)
+	resp, err := w.client.Get(targetUrl)
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch URL %s: %v", url, err)
+		return nil, fmt.Errorf("failed to fetch URL %s: %v", targetUrl, err)
 	}
 	defer resp.Body.Close()
 
@@ -86,6 +133,7 @@ func (w *WebScraper) ScrapeWebsite(url string) (*WebsiteContent, error) {
 	content := WebsiteContent{
 		LastUpdated:   time.Now(),
 		PDFContent:    make(map[string]*PDFContent),
+		FileContent:   make(map[string]*FileContent),
 		LinkedContent: make(map[string]*LinkedPageContent),
 		Metadata:      make(map[string]string),
 	}
@@ -140,10 +188,11 @@ func (w *WebScraper) ScrapeWebsite(url string) (*WebsiteContent, error) {
 		}
 	})
 
-	w.processPDFs(&content, url)
+	w.processPDFs(&content, targetUrl)
+	w.processFiles(&content, targetUrl)
 	w.processLinkedContent(&content)
 
-	w.cache[url] = content
+	w.cache[targetUrl] = content
 	return &content, nil
 }
 
@@ -170,8 +219,35 @@ func (w *WebScraper) processPDFs(content *WebsiteContent, baseURL string) {
 	}
 }
 
+func (w *WebScraper) processFiles(content *WebsiteContent, baseURL string) {
+	for _, link := range content.Links {
+		if w.isFileLink(link.URL) {
+			fullURL := w.resolveURL(baseURL, link.URL)
+
+			if cached, exists := w.fileCache[fullURL]; exists {
+				if time.Since(cached.LastUpdated) < 24*time.Hour {
+					content.FileContent[link.URL] = cached
+					continue
+				}
+			}
+
+			fileContent, err := w.fileParser.ParseFromURL(fullURL)
+			if err != nil {
+				continue
+			}
+
+			w.fileCache[fullURL] = fileContent
+			content.FileContent[link.URL] = fileContent
+		}
+	}
+}
+
 func (w *WebScraper) isPDFLink(url string) bool {
 	return w.pdfExtractor.isValidPDFURL(url)
+}
+
+func (w *WebScraper) isFileLink(url string) bool {
+	return w.fileParser.isValidFileURL(url)
 }
 
 func (w *WebScraper) resolveURL(baseURL, linkURL string) string {
@@ -219,12 +295,17 @@ func (w *WebScraper) isProfessionalLink(url string) bool {
 	return false
 }
 
-func (w *WebScraper) scrapeLinkedPage(url string) (*LinkedPageContent, error) {
+func (w *WebScraper) scrapeLinkedPage(targetUrl string) (*LinkedPageContent, error) {
+	// Check if the URL is allowed to be scraped
+	if !w.isUrlAllowed(targetUrl) {
+		return nil, fmt.Errorf("URL not allowed for scraping: %s", targetUrl)
+	}
+
 	client := &http.Client{
 		Timeout: 15 * time.Second,
 	}
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", targetUrl, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +329,7 @@ func (w *WebScraper) scrapeLinkedPage(url string) (*LinkedPageContent, error) {
 	}
 
 	linkedContent := &LinkedPageContent{
-		URL:             url,
+		URL:             targetUrl,
 		LastUpdated:     time.Now(),
 		FirstLevelLinks: make([]FirstLevelLink, 0),
 	}
@@ -257,8 +338,8 @@ func (w *WebScraper) scrapeLinkedPage(url string) (*LinkedPageContent, error) {
 	linkedContent.Title = strings.TrimSpace(doc.Find("title").First().Text())
 
 	// Determine content type and relevance
-	linkedContent.ContentType = w.determineContentType(url)
-	linkedContent.Relevance = w.calculateRelevance(url, linkedContent.Title)
+	linkedContent.ContentType = w.determineContentType(targetUrl)
+	linkedContent.Relevance = w.calculateRelevance(targetUrl, linkedContent.Title)
 
 	// Extract description
 	doc.Find("meta[name='description'], meta[property='og:description']").Each(func(i int, s *goquery.Selection) {
@@ -280,7 +361,7 @@ func (w *WebScraper) scrapeLinkedPage(url string) (*LinkedPageContent, error) {
 	})
 
 	// Extract text content based on the platform
-	if strings.Contains(url, "github.com") {
+	if strings.Contains(targetUrl, "github.com") {
 		// GitHub profile/repo specific selectors
 		var textParts []string
 		doc.Find(".user-profile-bio, .repository-description, .markdown-body, .readme").Each(func(i int, s *goquery.Selection) {
@@ -290,7 +371,7 @@ func (w *WebScraper) scrapeLinkedPage(url string) (*LinkedPageContent, error) {
 			}
 		})
 		linkedContent.Text = strings.Join(textParts, "\n\n")
-	} else if strings.Contains(url, "linkedin.com") {
+	} else if strings.Contains(targetUrl, "linkedin.com") {
 		// LinkedIn specific selectors (limited due to auth requirements)
 		var textParts []string
 		doc.Find(".pv-about-section, .summary, .experience").Each(func(i int, s *goquery.Selection) {
@@ -440,12 +521,17 @@ func (w *WebScraper) isSameDomain(url1, url2 string) bool {
 	return false
 }
 
-func (w *WebScraper) scrapeFirstLevelPage(url, title string) *FirstLevelLink {
+func (w *WebScraper) scrapeFirstLevelPage(targetUrl, title string) *FirstLevelLink {
+	// Check if the URL is allowed to be scraped
+	if !w.isUrlAllowed(targetUrl) {
+		return nil // Silently skip disallowed URLs for first-level links
+	}
+
 	client := &http.Client{
 		Timeout: 10 * time.Second, // Shorter timeout for first-level links
 	}
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", targetUrl, nil)
 	if err != nil {
 		return nil
 	}
@@ -468,7 +554,7 @@ func (w *WebScraper) scrapeFirstLevelPage(url, title string) *FirstLevelLink {
 	}
 
 	firstLevelLink := &FirstLevelLink{
-		URL:         url,
+		URL:         targetUrl,
 		Title:       title,
 		LastUpdated: time.Now(),
 	}
@@ -506,7 +592,7 @@ func (w *WebScraper) scrapeFirstLevelPage(url, title string) *FirstLevelLink {
 		firstLevelLink.Text = firstLevelLink.Text[:1000] + "..."
 	}
 
-	firstLevelLink.Relevance = w.calculateRelevance(url, firstLevelLink.Title)
+	firstLevelLink.Relevance = w.calculateRelevance(targetUrl, firstLevelLink.Title)
 
 	// Only return if there's meaningful content
 	if len(firstLevelLink.Text) > 50 || len(firstLevelLink.Description) > 20 {

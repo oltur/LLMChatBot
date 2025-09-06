@@ -124,7 +124,7 @@ func (s *OllamaService) AnalyzePDFContent(pdfContent *PDFContent, question strin
 
 	content := pdfContent.Text
 
-	prompt := fmt.Sprintf(`You are an AI assistant analyzing Oleksandr Turevskiy's CV/Resume. 
+	prompt := fmt.Sprintf(`You are an AI assistant analyzing John Smith's CV/Resume. 
 
 CV Content:
 %s
@@ -132,6 +132,60 @@ CV Content:
 User Question: %s
 
 Please analyze the CV content and provide a comprehensive answer. Focus on extracting relevant information about skills, experience, education, and achievements.`, content, question)
+
+	return s.generateResponse(prompt)
+}
+
+func (s *OllamaService) AnalyzeFileContent(fileContent *FileContent, question string) (string, error) {
+	if !s.IsEnabled() {
+		return "", fmt.Errorf("Ollama service is not available - ensure Ollama is running with %s model", s.model)
+	}
+
+	if fileContent == nil {
+		return "", fmt.Errorf("no file content provided")
+	}
+
+	var contentBuilder strings.Builder
+	contentBuilder.WriteString(fmt.Sprintf("FILE TYPE: %s\n", strings.ToUpper(fileContent.FileType)))
+	contentBuilder.WriteString(fmt.Sprintf("FILE NAME: %s\n", fileContent.FileName))
+
+	if len(fileContent.SheetNames) > 0 {
+		contentBuilder.WriteString(fmt.Sprintf("SHEETS: %s\n", strings.Join(fileContent.SheetNames, ", ")))
+	}
+	if fileContent.RowCount > 0 {
+		contentBuilder.WriteString(fmt.Sprintf("ROWS: %d\n", fileContent.RowCount))
+	}
+	if fileContent.ColumnCount > 0 {
+		contentBuilder.WriteString(fmt.Sprintf("COLUMNS: %d\n", fileContent.ColumnCount))
+	}
+
+	if len(fileContent.Metadata) > 0 {
+		contentBuilder.WriteString("\nMETADATA:\n")
+		for key, value := range fileContent.Metadata {
+			contentBuilder.WriteString(fmt.Sprintf("- %s: %s\n", key, value))
+		}
+	}
+
+	contentBuilder.WriteString("\nCONTENT:\n")
+	contentBuilder.WriteString(fileContent.Text)
+
+	prompt := fmt.Sprintf(`You are an AI assistant analyzing a %s file. 
+
+FILE INFORMATION:
+%s
+
+User Question: %s
+
+INSTRUCTIONS:
+1. Analyze the file content based on its type (%s)
+2. For XLSX files: Focus on data structure, patterns, and insights from spreadsheet data
+3. For DOCX files: Extract key information, document structure, and textual content
+4. For CSV files: Identify data patterns, column relationships, and statistical insights
+5. Provide relevant answers based on the file content and user's question
+6. If the file contains professional data (resume, portfolio, etc.), highlight relevant skills and experience
+7. For data files, provide summaries and key findings
+
+Please provide a comprehensive analysis based on the file content above.`, strings.ToUpper(fileContent.FileType), contentBuilder.String(), question, strings.ToUpper(fileContent.FileType))
 
 	return s.generateResponse(prompt)
 }
@@ -144,7 +198,7 @@ func (s *OllamaService) GenerateIntelligentResponse(websiteContent *WebsiteConte
 	var contentBuilder strings.Builder
 
 	if websiteContent != nil {
-		contentBuilder.WriteString("=== COMPREHENSIVE OLEKSANDR TUREVSKIY PROFILE ===\n\n")
+		contentBuilder.WriteString("=== COMPREHENSIVE John Smith PROFILE ===\n\n")
 
 		// Include main website content
 		if websiteContent.Title != "" {
@@ -234,15 +288,43 @@ func (s *OllamaService) GenerateIntelligentResponse(websiteContent *WebsiteConte
 				contentBuilder.WriteString("\n--- END CV/RESUME ---\n\n")
 			}
 		}
+
+		// Include parsed file content (XLSX, DOCX, CSV)
+		if len(websiteContent.FileContent) > 0 {
+			contentBuilder.WriteString("PARSED FILE DOCUMENTS:\n")
+			for url, file := range websiteContent.FileContent {
+				contentBuilder.WriteString(fmt.Sprintf("\n--- %s FILE FROM: %s ---\n", strings.ToUpper(file.FileType), url))
+				contentBuilder.WriteString(fmt.Sprintf("File Name: %s\n", file.FileName))
+				if len(file.SheetNames) > 0 {
+					contentBuilder.WriteString(fmt.Sprintf("Sheets: %s\n", strings.Join(file.SheetNames, ", ")))
+				}
+				if file.RowCount > 0 {
+					contentBuilder.WriteString(fmt.Sprintf("Rows: %d\n", file.RowCount))
+				}
+				if file.ColumnCount > 0 {
+					contentBuilder.WriteString(fmt.Sprintf("Columns: %d\n", file.ColumnCount))
+				}
+				if len(file.Metadata) > 0 {
+					contentBuilder.WriteString("Metadata:\n")
+					for key, value := range file.Metadata {
+						contentBuilder.WriteString(fmt.Sprintf("- %s: %s\n", key, value))
+					}
+				}
+				contentBuilder.WriteString("Content:\n")
+				contentBuilder.WriteString(file.Text)
+				contentBuilder.WriteString(fmt.Sprintf("\n--- END %s FILE ---\n\n", strings.ToUpper(file.FileType)))
+			}
+		}
 	}
 
-	prompt := fmt.Sprintf(`You are an intelligent assistant with comprehensive information about Oleksandr Turevskiy. You have access to:
+	prompt := fmt.Sprintf(`You are an intelligent assistant with comprehensive information about John Smith. You have access to:
 - His main website content and metadata
 - Full CV/resume documents with detailed professional information
 - Content from external professional profiles (GitHub, LinkedIn, etc.)
 - First-level linked pages from external profiles with relevance scoring
 - All professional links and social profiles
 - Complete biographical and career information with content type classification
+- Parsed file documents (XLSX, DOCX, CSV) with structured data and metadata
 
 COMPREHENSIVE DATA AVAILABLE:
 %s
@@ -257,9 +339,10 @@ INSTRUCTIONS:
 5. For contact/social info, reference the professional links and their content types
 6. For projects/code, utilize GitHub/GitLab profiles AND their first-level linked repositories/projects
 7. Pay attention to content types (professional, blog, project, technical) when providing answers
-8. Be conversational, detailed, and cite sources with their relevance when helpful
-9. Use first-level linked content to provide deeper insights into projects, articles, and professional work
-10. If information is limited, clearly state what's not available and suggest checking specific high-relevance sources
+8. For file content (XLSX/DOCX/CSV), utilize structured data, metadata, and extracted information
+9. Be conversational, detailed, and cite sources with their relevance when helpful
+10. Use first-level linked content to provide deeper insights into projects, articles, and professional work
+11. If information is limited, clearly state what's not available and suggest checking specific high-relevance sources
 
 Provide a thorough response using the comprehensive data available above.`, contentBuilder.String(), userMessage)
 

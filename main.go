@@ -14,6 +14,11 @@ func main() {
 		port = "8080"
 	}
 
+	websiteURL := os.Getenv("WEBSITE_URL")
+	if websiteURL == "" {
+		log.Fatal("WEBSITE_URL environment variable is required")
+	}
+
 	scraper := NewWebScraper()
 	ollamaService := NewOllamaService()
 	chatbot := NewChatbot(scraper, ollamaService)
@@ -21,6 +26,8 @@ func main() {
 
 	r := mux.NewRouter()
 	server.SetupRoutes(r)
+
+	log.Printf("Target website: %s", websiteURL)
 
 	if ollamaService.IsEnabled() {
 		log.Println("Ollama CodeLlama integration enabled")

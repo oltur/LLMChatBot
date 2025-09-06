@@ -3,7 +3,7 @@
 This file contains project-specific information for Claude Code to better understand and work with this codebase.
 
 ## Project Overview
-LLM Chat Bot - An AI-powered chatbot application that provides information about Oleksandr Turevskiy using web scraping and local Ollama CodeLlama integration for intelligent content analysis.
+LLM Chat Bot - An AI-powered chatbot application that provides information about John Smith using web scraping and local Ollama CodeLlama integration for intelligent content analysis.
 
 ## Development Commands
 - Build: `go build`
@@ -27,12 +27,14 @@ LLMChatBot/
 ```
 
 ## Environment Variables
+- `WEBSITE_URL`: Target website URL to scrape (required)
 - `OLLAMA_URL`: URL for Ollama API (defaults to http://localhost:11434)
 - `OLLAMA_MODEL`: Model to use (defaults to codellama:13b)
 - `PORT`: Server port (defaults to 8080)
+- `ALLOWED_SCRAPING_URL_PATTERNS`: Comma-separated list of URL patterns allowed for scraping (optional, if not set allows all URLs)
 
 ## Features
-- Enhanced web scraping of turevskiy.com for comprehensive profile information
+- Enhanced web scraping  for comprehensive profile information
 - Metadata extraction from website (keywords, author, descriptions, etc.)
 - External professional profile scraping (GitHub, LinkedIn, GitLab, Medium, etc.)
 - **First-level external page scraping** - automatically discovers and scrapes linked pages from professional profiles

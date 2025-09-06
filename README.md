@@ -1,11 +1,11 @@
-# AI-Powered Turevskiy.com Chatbot
+# AI-Powered Chatbot
 
-An advanced Go-based chatbot application that provides comprehensive information about Oleksandr Turevskiy through multi-layered web scraping, PDF analysis, and local AI integration using Ollama CodeLlama.
+An advanced Go-based chatbot application that provides comprehensive information about John Smith through multi-layered web scraping, PDF analysis, and local AI integration using Ollama CodeLlama.
 
 ## 🚀 Features
 
 ### Core Capabilities
-- **Enhanced Web Scraping** of turevskiy.com with comprehensive metadata extraction
+- **Enhanced Web Scraping** of specified web site with comprehensive metadata extraction
 - **PDF Analysis & Extraction** with intelligent content parsing (CV/Resume)
 - **Local AI Integration** using Ollama CodeLlama for intelligent responses
 - **Multi-layered Content Aggregation** from website + external profiles + first-level links
@@ -30,6 +30,7 @@ An advanced Go-based chatbot application that provides comprehensive information
 - **Go 1.21+**
 - **Ollama** installed and running locally
 - **CodeLlama:13b model** pulled in Ollama
+- **WEBSITE_URL environment variable** must be set before running
 
 ### Installing Ollama and CodeLlama
 
@@ -66,15 +67,20 @@ go build
 
 ### Running the Application
 
+⚠️ **Important**: The `WEBSITE_URL` environment variable is required. The application will exit with an error if not provided.
+
 ```bash
-# Default configuration (Ollama at localhost:11434, CodeLlama:13b)
-./turevskiy-chatbot
+# Basic configuration (WEBSITE_URL is required)
+WEBSITE_URL=https://turevskiy.com ./turevskiy-chatbot
+
+# Custom website URL
+WEBSITE_URL=https://example.com ./turevskiy-chatbot
 
 # Custom Ollama configuration
-OLLAMA_URL=http://localhost:11434 OLLAMA_MODEL=codellama:13b ./turevskiy-chatbot
+WEBSITE_URL=https://turevskiy.com OLLAMA_URL=http://localhost:11434 OLLAMA_MODEL=codellama:13b ./turevskiy-chatbot
 
-# Custom port
-PORT=8084 ./turevskiy-chatbot
+# Full custom configuration
+WEBSITE_URL=https://example.com OLLAMA_URL=http://localhost:11434 OLLAMA_MODEL=codellama:13b PORT=8084 ./turevskiy-chatbot
 ```
 
 ### Web Interface
@@ -98,7 +104,7 @@ Content-Type: application/json
 **Response:**
 ```json
 {
-  "response": "Based on Oleksandr's CV and GitHub profiles, his technical skills include: [AI-generated comprehensive analysis of skills from multiple sources including CV, GitHub repositories, and linked projects]",
+  "response": "Based on Somebody's CV and GitHub profiles, his technical skills include: [AI-generated comprehensive analysis of skills from multiple sources including CV, GitHub repositories, and linked projects]",
   "timestamp": "2025-09-05 20:42:37"
 }
 ```
@@ -111,7 +117,7 @@ GET /health
 ## 💬 Query Capabilities
 
 ### Basic Information Queries
-- **Professional Background**: "Who is Oleksandr Turevskiy?"
+- **Professional Background**: "Who is John Smith?"
 - **Contact Information**: "How can I contact him?"
 - **Profile Links**: "What are his social profiles?"
 
@@ -166,6 +172,7 @@ GET /health
 
 | Variable | Description | Default |
 |----------|-------------|---------|
+| `WEBSITE_URL` | Target website URL to scrape | **Required** |
 | `PORT` | Server port | `8080` |
 | `OLLAMA_URL` | Ollama API endpoint | `http://localhost:11434` |
 | `OLLAMA_MODEL` | AI model to use | `codellama:13b` |
@@ -179,7 +186,7 @@ GET /health
 
 ## 📊 Data Flow
 
-1. **Website Scraping**: Extracts turevskiy.com content + metadata
+1. **Website Scraping**: Extracts content + metadata
 2. **External Profile Discovery**: Identifies professional links
 3. **Profile Content Extraction**: Scrapes each external profile with enhanced metadata
 4. **First-Level Link Analysis**: Discovers and scores outbound links from profiles

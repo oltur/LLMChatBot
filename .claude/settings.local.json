@@ -8,7 +8,11 @@
       "Bash(lsof:*)",
       "Bash(mv:*)",
       "Bash(rm:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(./turevskiy-chatbot)",
+      "Bash(python3:*)",
+      "Bash(zip:*)",
+      "Bash(touch:*)"
     ],
     "deny": [],
     "ask": []

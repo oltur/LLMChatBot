@@ -1,0 +1,61 @@
+John Smith - Professional Resume
+
+Contact Information
+Email: whatever.youwant@example.com
+Phone: +1 (555) 123-4567
+LinkedIn: linkedin.com/in/whatever-you-want
+GitHub: github.com/whatever-you-want
+
+Professional Summary
+Experienced software developer with 8+ years of expertise in Go, Python, and JavaScript. Specialized in building scalable web applications, microservices architecture, and AI-powered chatbot systems. Strong background in DevOps practices and cloud infrastructure.
+
+Technical Skills
+• Programming Languages: Go, Python, JavaScript, TypeScript, Java
+• Frameworks: React, Vue.js, Node.js, Express, Django, Flask
+• Databases: PostgreSQL, MongoDB, Redis, MySQL
+• Cloud: AWS, Azure, GCP, Docker, Kubernetes
+• DevOps: Jenkins, GitHub Actions, Terraform, Ansible
+• AI/ML: Ollama, TensorFlow, PyTorch, Natural Language Processing
+
+Professional Experience
+
+Senior Software Engineer | TechCorp Inc.
+2020 - Present
+• Led development of AI-powered chatbot system using Go and Ollama
+• Implemented web scraping and document parsing features for XLSX, DOCX, and CSV files
+• Built microservices architecture serving 100K+ daily active users
+• Reduced system response time by 40% through performance optimization
+
+Software Developer | StartupCo
+2018 - 2020
+• Developed RESTful APIs and microservices using Go and Python
+• Implemented automated testing and CI/CD pipelines
+• Collaborated with cross-functional teams on agile development projects
+
+Education
+
+Master of Science in Computer Science
+University of Technology | 2018
+GPA: 3.8/4.0
+
+Bachelor of Science in Software Engineering
+State University | 2016
+Magna Cum Laude, GPA: 3.7/4.0
+
+Key Projects
+
+LLM ChatBot System
+• AI-powered chatbot with web scraping capabilities
+• Supports PDF, XLSX, DOCX, and CSV file parsing
+• Integrated with Ollama for intelligent content analysis
+• Built with Go, featuring caching and performance optimization
+
+Microservices Architecture Platform
+• Designed and implemented scalable microservices using Go
+• Containerized with Docker and orchestrated with Kubernetes
+• Implemented service mesh and API gateway patterns
+
+Certifications
+• AWS Certified Solutions Architect
+• Google Cloud Professional Developer
+• Docker Certified Associate
