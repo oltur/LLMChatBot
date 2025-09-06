@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -11,13 +12,26 @@ import (
 )
 
 type WebScraper struct {
-	client             *http.Client
-	cache              map[string]WebsiteContent
-	pdfExtractor       *PDFExtractor
-	pdfCache           map[string]*PDFContent
-	fileParser         *FileParser
-	fileCache          map[string]*FileContent
-	allowedUrlPatterns []string
+	client              *http.Client
+	cache               map[string]WebsiteContent
+	pdfExtractor        *PDFExtractor
+	pdfCache            map[string]*PDFContent
+	fileParser          *FileParser
+	fileCache           map[string]*FileContent
+	allowedUrlPatterns  []string
+	scrapedUrls         []ScrapedUrl
+	enableInternalLinks bool
+}
+
+type ScrapedUrl struct {
+	URL         string
+	Type        string // "main", "linked", "first_level", "pdf", "file"
+	Title       string
+	Success     bool
+	Error       string
+	ScrapedAt   time.Time
+	Relevance   int
+	ContentType string
 }
 
 type WebsiteContent struct {
@@ -75,16 +89,21 @@ func NewWebScraper() *WebScraper {
 		}
 	}
 
+	// Check if internal link processing is enabled
+	enableInternal := strings.ToLower(os.Getenv("ENABLE_INTERNAL_LINK_SCRAPING")) == "true"
+
 	return &WebScraper{
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
-		cache:              make(map[string]WebsiteContent),
-		pdfExtractor:       NewPDFExtractor(),
-		pdfCache:           make(map[string]*PDFContent),
-		fileParser:         NewFileParser(),
-		fileCache:          make(map[string]*FileContent),
-		allowedUrlPatterns: allowedUrlPatterns,
+		cache:               make(map[string]WebsiteContent),
+		pdfExtractor:        NewPDFExtractor(),
+		pdfCache:            make(map[string]*PDFContent),
+		fileParser:          NewFileParser(),
+		fileCache:           make(map[string]*FileContent),
+		allowedUrlPatterns:  allowedUrlPatterns,
+		scrapedUrls:         make([]ScrapedUrl, 0),
+		enableInternalLinks: enableInternal,
 	}
 }
 
@@ -107,26 +126,113 @@ func (w *WebScraper) isUrlAllowed(targetUrl string) bool {
 	return false
 }
 
+func (w *WebScraper) recordScrapedUrl(url, urlType, title string, success bool, err error, relevance int, contentType string) {
+	scrapedUrl := ScrapedUrl{
+		URL:         url,
+		Type:        urlType,
+		Title:       title,
+		Success:     success,
+		ScrapedAt:   time.Now(),
+		Relevance:   relevance,
+		ContentType: contentType,
+	}
+
+	if err != nil {
+		scrapedUrl.Error = err.Error()
+	}
+
+	w.scrapedUrls = append(w.scrapedUrls, scrapedUrl)
+}
+
+func (w *WebScraper) GetScrapedUrls() []ScrapedUrl {
+	return w.scrapedUrls
+}
+
+func (w *WebScraper) ClearScrapedUrls() {
+	w.scrapedUrls = make([]ScrapedUrl, 0)
+}
+
+func (w *WebScraper) PrintScrapedUrls() {
+	fmt.Printf("\n=== SCRAPING SUMMARY ===\n")
+	fmt.Printf("Total URLs processed: %d\n", len(w.scrapedUrls))
+
+	// Count by type and status
+	typeCount := make(map[string]int)
+	successCount := 0
+	failureCount := 0
+
+	for _, scraped := range w.scrapedUrls {
+		typeCount[scraped.Type]++
+		if scraped.Success {
+			successCount++
+		} else {
+			failureCount++
+		}
+	}
+
+	fmt.Printf("Successful: %d, Failed: %d\n", successCount, failureCount)
+	fmt.Printf("By type: ")
+	for urlType, count := range typeCount {
+		fmt.Printf("%s: %d, ", urlType, count)
+	}
+	fmt.Printf("\n\n")
+
+	// Print detailed list
+	fmt.Printf("Detailed scraping log:\n")
+	for i, scraped := range w.scrapedUrls {
+		status := "✓"
+		if !scraped.Success {
+			status = "✗"
+		}
+
+		title := scraped.Title
+		if title == "" {
+			title = "(no title)"
+		}
+		if len(title) > 50 {
+			title = title[:50] + "..."
+		}
+
+		fmt.Printf("%d. %s [%s] %s - %s", i+1, status, scraped.Type, scraped.URL, title)
+		if scraped.Relevance > 0 {
+			fmt.Printf(" (relevance: %d)", scraped.Relevance)
+		}
+		if scraped.ContentType != "" {
+			fmt.Printf(" [%s]", scraped.ContentType)
+		}
+		if !scraped.Success && scraped.Error != "" {
+			fmt.Printf(" - Error: %s", scraped.Error)
+		}
+		fmt.Printf("\n")
+	}
+	fmt.Printf("========================\n\n")
+}
+
 func (w *WebScraper) ScrapeWebsite(targetUrl string) (*WebsiteContent, error) {
 	// Check if the URL is allowed to be scraped
 	if !w.isUrlAllowed(targetUrl) {
-		return nil, fmt.Errorf("URL not allowed for scraping: %s", targetUrl)
+		err := fmt.Errorf("URL not allowed for scraping: %s", targetUrl)
+		w.recordScrapedUrl(targetUrl, "main", "", false, err, 0, "")
+		return nil, err
 	}
 
 	if cached, exists := w.cache[targetUrl]; exists {
 		if time.Since(cached.LastUpdated) < 1*time.Hour {
+			w.recordScrapedUrl(targetUrl, "main", cached.Title, true, nil, 0, "cached")
 			return &cached, nil
 		}
 	}
 
 	resp, err := w.client.Get(targetUrl)
 	if err != nil {
+		w.recordScrapedUrl(targetUrl, "main", "", false, err, 0, "")
 		return nil, fmt.Errorf("failed to fetch URL %s: %v", targetUrl, err)
 	}
 	defer resp.Body.Close()
 
 	doc, err := goquery.NewDocumentFromReader(resp.Body)
 	if err != nil {
+		w.recordScrapedUrl(targetUrl, "main", "", false, err, 0, "")
 		return nil, fmt.Errorf("failed to parse HTML: %v", err)
 	}
 
@@ -190,7 +296,10 @@ func (w *WebScraper) ScrapeWebsite(targetUrl string) (*WebsiteContent, error) {
 
 	w.processPDFs(&content, targetUrl)
 	w.processFiles(&content, targetUrl)
-	w.processLinkedContent(&content)
+	w.processLinkedContent(&content, targetUrl)
+
+	// Record successful main page scraping
+	w.recordScrapedUrl(targetUrl, "main", content.Title, true, nil, 0, "website")
 
 	w.cache[targetUrl] = content
 	return &content, nil
@@ -210,9 +319,11 @@ func (w *WebScraper) processPDFs(content *WebsiteContent, baseURL string) {
 
 			pdfContent, err := w.pdfExtractor.ExtractFromURL(fullURL)
 			if err != nil {
+				w.recordScrapedUrl(fullURL, "pdf", link.Title, false, err, 0, "pdf")
 				continue
 			}
 
+			w.recordScrapedUrl(fullURL, "pdf", pdfContent.Title, true, nil, 0, "pdf")
 			w.pdfCache[fullURL] = pdfContent
 			content.PDFContent[link.URL] = pdfContent
 		}
@@ -233,9 +344,11 @@ func (w *WebScraper) processFiles(content *WebsiteContent, baseURL string) {
 
 			fileContent, err := w.fileParser.ParseFromURL(fullURL)
 			if err != nil {
+				w.recordScrapedUrl(fullURL, "file", link.Title, false, err, 0, "file")
 				continue
 			}
 
+			w.recordScrapedUrl(fullURL, "file", fileContent.FileName, true, nil, 0, fileContent.FileType)
 			w.fileCache[fullURL] = fileContent
 			content.FileContent[link.URL] = fileContent
 		}
@@ -251,25 +364,71 @@ func (w *WebScraper) isFileLink(url string) bool {
 }
 
 func (w *WebScraper) resolveURL(baseURL, linkURL string) string {
+	// If linkURL is already absolute, return as-is
 	if strings.HasPrefix(linkURL, "http") {
 		return linkURL
 	}
 
-	if strings.HasPrefix(linkURL, "/") {
-		return strings.TrimSuffix(baseURL, "/") + linkURL
+	// Use Go's built-in URL resolution
+	base, err := url.Parse(baseURL)
+	if err != nil {
+		// Fallback to simple string concatenation if parsing fails
+		if strings.HasPrefix(linkURL, "/") {
+			return strings.TrimSuffix(baseURL, "/") + linkURL
+		}
+		return strings.TrimSuffix(baseURL, "/") + "/" + linkURL
 	}
 
-	return strings.TrimSuffix(baseURL, "/") + "/" + linkURL
+	// Parse the relative URL
+	relative, err := url.Parse(linkURL)
+	if err != nil {
+		// Fallback to simple string concatenation if parsing fails
+		if strings.HasPrefix(linkURL, "/") {
+			return strings.TrimSuffix(baseURL, "/") + linkURL
+		}
+		return strings.TrimSuffix(baseURL, "/") + "/" + linkURL
+	}
+
+	// Use Go's ResolveReference which handles relative URLs correctly
+	resolved := base.ResolveReference(relative)
+	result := resolved.String()
+
+	// Debug logging to help troubleshoot URL resolution issues
+	fmt.Printf("DEBUG: URL Resolution - Base: %s, Link: %s, Result: %s\n", baseURL, linkURL, result)
+
+	return result
 }
 
-func (w *WebScraper) processLinkedContent(content *WebsiteContent) {
-	// Process external professional links for additional context
+func (w *WebScraper) processLinkedContent(content *WebsiteContent, baseURL string) {
+	// Process both professional links and internal navigation links
 	for _, link := range content.Links {
-		if w.isProfessionalLink(link.URL) {
-			linkedContent, err := w.scrapeLinkedPage(link.URL)
+		shouldProcess := false
+		fullURL := link.URL
+
+		// Resolve URLs to absolute URLs
+		if link.Type == "internal" {
+			fullURL = w.resolveURL(baseURL, link.URL)
+		} else if strings.HasPrefix(link.URL, "/") {
+			// Handle absolute paths that might be misclassified as external
+			fullURL = w.resolveURL(baseURL, link.URL)
+		}
+
+		// Check if it's a professional link (external profiles)
+		if w.isProfessionalLink(fullURL) {
+			shouldProcess = true
+		}
+
+		// Check if it's an internal navigation link that's allowed by URL patterns
+		if !shouldProcess && w.enableInternalLinks && w.isInternalNavigationLink(fullURL, link.Type) {
+			shouldProcess = true
+		}
+
+		if shouldProcess {
+			linkedContent, err := w.scrapeLinkedPage(fullURL)
 			if err == nil && linkedContent != nil {
-				content.LinkedContent[link.URL] = linkedContent
+				content.LinkedContent[fullURL] = linkedContent
 			}
+			// Note: scrapeLinkedPage handles its own recording
 		}
 	}
 }
@@ -295,10 +454,57 @@ func (w *WebScraper) isProfessionalLink(url string) bool {
 	return false
 }
 
+func (w *WebScraper) isInternalNavigationLink(fullUrl, linkType string) bool {
+	// Only process internal links (not external)
+	if linkType != "internal" {
+		return false
+	}
+
+	// Check if the internal link would be allowed by URL patterns
+	if !w.isUrlAllowed(fullUrl) {
+		return false
+	}
+
+	// Skip certain common non-content links
+	lowerUrl := strings.ToLower(fullUrl)
+	skipPatterns := []string{
+		"#", // anchor links
+		"mailto:",
+		"tel:",
+		"javascript:",
+		".css",
+		".js",
+		".ico",
+		".png",
+		".jpg",
+		".jpeg",
+		".gif",
+		".svg",
+		"/admin",
+		"/login",
+		"/logout",
+		"/cart",
+		"/checkout",
+		"?search",
+		"?sort",
+		"?filter",
+	}
+
+	for _, pattern := range skipPatterns {
+		if strings.Contains(lowerUrl, pattern) {
+			return false
+		}
+	}
+
+	return true
+}
+
 func (w *WebScraper) scrapeLinkedPage(targetUrl string) (*LinkedPageContent, error) {
 	// Check if the URL is allowed to be scraped
 	if !w.isUrlAllowed(targetUrl) {
-		return nil, fmt.Errorf("URL not allowed for scraping: %s", targetUrl)
+		err := fmt.Errorf("URL not allowed for scraping: %s", targetUrl)
+		w.recordScrapedUrl(targetUrl, "linked", "", false, err, 0, "")
+		return nil, err
 	}
 
 	client := &http.Client{
@@ -307,6 +513,7 @@ func (w *WebScraper) scrapeLinkedPage(targetUrl string) (*LinkedPageContent, err
 
 	req, err := http.NewRequest("GET", targetUrl, nil)
 	if err != nil {
+		w.recordScrapedUrl(targetUrl, "linked", "", false, err, 0, "")
 		return nil, err
 	}
 
@@ -315,16 +522,20 @@ func (w *WebScraper) scrapeLinkedPage(targetUrl string) (*LinkedPageContent, err
 
 	resp, err := client.Do(req)
 	if err != nil {
+		w.recordScrapedUrl(targetUrl, "linked", "", false, err, 0, "")
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+		err := fmt.Errorf("HTTP %d", resp.StatusCode)
+		w.recordScrapedUrl(targetUrl, "linked", "", false, err, 0, "")
+		return nil, err
 	}
 
 	doc, err := goquery.NewDocumentFromReader(resp.Body)
 	if err != nil {
+		w.recordScrapedUrl(targetUrl, "linked", "", false, err, 0, "")
 		return nil, err
 	}
 
@@ -400,6 +611,9 @@ func (w *WebScraper) scrapeLinkedPage(targetUrl string) (*LinkedPageContent, err
 
 	// Scrape first-level external links
 	w.scrapeFirstLevelLinks(doc, linkedContent)
+
+	// Record successful linked page scraping
+	w.recordScrapedUrl(targetUrl, "linked", linkedContent.Title, true, nil, linkedContent.Relevance, linkedContent.ContentType)
 
 	return linkedContent, nil
 }
@@ -504,6 +718,7 @@ func (w *WebScraper) scrapeFirstLevelLinks(doc *goquery.Document, linkedContent 
 		if firstLevelContent != nil {
 			firstLevelLinks = append(firstLevelLinks, *firstLevelContent)
 		}
+		// Note: scrapeFirstLevelPage handles its own recording
 	})
 
 	linkedContent.FirstLevelLinks = firstLevelLinks
@@ -533,6 +748,7 @@ func (w *WebScraper) scrapeFirstLevelPage(targetUrl, title string) *FirstLevelLi
 
 	req, err := http.NewRequest("GET", targetUrl, nil)
 	if err != nil {
+		w.recordScrapedUrl(targetUrl, "first_level", title, false, err, 0, "first_level")
 		return nil
 	}
 
@@ -540,16 +756,20 @@ func (w *WebScraper) scrapeFirstLevelPage(targetUrl, title string) *FirstLevelLi
 
 	resp, err := client.Do(req)
 	if err != nil {
+		w.recordScrapedUrl(targetUrl, "first_level", title, false, err, 0, "first_level")
 		return nil
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		err := fmt.Errorf("HTTP %d", resp.StatusCode)
+		w.recordScrapedUrl(targetUrl, "first_level", title, false, err, 0, "first_level")
 		return nil
 	}
 
 	doc, err := goquery.NewDocumentFromReader(resp.Body)
 	if err != nil {
+		w.recordScrapedUrl(targetUrl, "first_level", title, false, err, 0, "first_level")
 		return nil
 	}
 
@@ -596,8 +816,12 @@ func (w *WebScraper) scrapeFirstLevelPage(targetUrl, title string) *FirstLevelLi
 
 	// Only return if there's meaningful content
 	if len(firstLevelLink.Text) > 50 || len(firstLevelLink.Description) > 20 {
+		// Record successful first-level page scraping
+		w.recordScrapedUrl(targetUrl, "first_level", firstLevelLink.Title, true, nil, firstLevelLink.Relevance, "first_level")
 		return firstLevelLink
 	}
 
+	// Record failed first-level page scraping (insufficient content)
+	w.recordScrapedUrl(targetUrl, "first_level", firstLevelLink.Title, false, fmt.Errorf("insufficient content"), 0, "first_level")
 	return nil
 }

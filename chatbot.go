@@ -37,10 +37,16 @@ func (c *Chatbot) refreshWebsiteData() error {
 		return nil
 	}
 
+	// Clear previous scraping logs for a fresh session
+	c.scraper.ClearScrapedUrls()
+
 	data, err := c.scraper.ScrapeWebsite(c.websiteURL)
 	if err != nil {
 		return fmt.Errorf("failed to refresh website data: %v", err)
 	}
+
+	// Print scraping summary after successful scraping
+	c.scraper.PrintScrapedUrls()
 
 	c.websiteData = data
 	c.lastDataFetch = time.Now()

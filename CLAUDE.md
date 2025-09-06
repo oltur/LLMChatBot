@@ -32,6 +32,7 @@ LLMChatBot/
 - `OLLAMA_MODEL`: Model to use (defaults to codellama:13b)
 - `PORT`: Server port (defaults to 8080)
 - `ALLOWED_SCRAPING_URL_PATTERNS`: Comma-separated list of URL patterns allowed for scraping (optional, if not set allows all URLs)
+- `ENABLE_INTERNAL_LINK_SCRAPING`: Set to "true" to enable scraping of internal navigation links, not just external professional links (default: false)
 
 ## Features
 - Enhanced web scraping  for comprehensive profile information
