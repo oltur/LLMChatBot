@@ -7,14 +7,17 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	regexp "regexp"
+	"strconv"
 	"strings"
 	"time"
 )
 
 type OllamaService struct {
-	baseURL string
-	model   string
-	client  *http.Client
+	baseURL               string
+	model                 string
+	maxTotalContentLength int // Max length of content to send to Ollama
+	client                *http.Client
 }
 
 type OllamaRequest struct {
@@ -41,9 +44,18 @@ func NewOllamaService() *OllamaService {
 		model = "codellama:13b"
 	}
 
+	// Parse maximum total text length (default: 20000)
+	maxTotalContentLength := 20000
+	if maxContentLengthStr := os.Getenv("MAX_TOTAL_CONTENT_LENGTH"); maxContentLengthStr != "" {
+		if parsed, err := strconv.Atoi(maxContentLengthStr); err == nil {
+			maxTotalContentLength = parsed
+		}
+	}
+
 	return &OllamaService{
-		baseURL: baseURL,
-		model:   model,
+		baseURL:               baseURL,
+		model:                 model,
+		maxTotalContentLength: maxTotalContentLength,
 		client: &http.Client{
 			Timeout: 60 * time.Second,
 		},
@@ -317,6 +329,18 @@ func (s *OllamaService) GenerateIntelligentResponse(websiteContent *WebsiteConte
 		}
 	}
 
+	cb := contentBuilder.String()
+	// Compile regex: one or more whitespace chars
+	re := regexp.MustCompile(`\s+`)
+
+	// Replace with single space
+	cb = re.ReplaceAllString(cb, " ")
+
+	// Limit content size to avoid overwhelming the AI TODO: configure
+	if len(cb) > s.maxTotalContentLength {
+		cb = cb[:s.maxTotalContentLength] + "..."
+	}
+
 	prompt := fmt.Sprintf(`You are an intelligent assistant with comprehensive information about this website. You have access to:
 - His main website content and metadata
 - Full CV/resume documents with detailed professional information
@@ -332,7 +356,7 @@ COMPREHENSIVE DATA AVAILABLE:
 USER QUESTION: %s
 
 INSTRUCTIONS:
-1. Answer using available information from main website and linked content
+1. Answer using available information from providede COMPREHENSIVE DATA AVAILABLE
 2. Provide specific details from any relevant source, considering relevance scores (higher scores = more reliable)
 3. Cross-reference information across sources and first-level links for comprehensive answers
 4. For file content (XLSX/DOCX/CSV/PDF), utilize structured data, metadata, and extracted information
@@ -340,7 +364,7 @@ INSTRUCTIONS:
 6. Use linked content to provide deeper insights into projects, articles, and professional work
 7. If information is limited, clearly state what's not available and suggest checking specific high-relevance sources
 
-Provide a thorough response using the comprehensive data available above.`, contentBuilder.String(), userMessage)
+Provide a thorough response using the comprehensive data available above.`, cb, userMessage)
 
 	return s.generateResponse(prompt)
 }
