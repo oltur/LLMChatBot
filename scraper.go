@@ -896,9 +896,15 @@ func (w *WebScraper) scrapeLinkedPageWithDepthAndContent(targetUrl string, depth
 
 	linkedContent.Text = b.String()
 
+	// Compile regex: one or more whitespace chars
+	re := regexp.MustCompile(`\s+`)
+
+	// Replace with single space
+	linkedContent.Text = re.ReplaceAllString(linkedContent.Text, " ")
+
 	// Limit content size to avoid overwhelming the AI TODO: configure
-	if len(linkedContent.Text) > 1000 {
-		linkedContent.Text = linkedContent.Text[:1000] + "..."
+	if len(linkedContent.Text) > w.maxContentLength {
+		linkedContent.Text = linkedContent.Text[:w.maxContentLength] + "..."
 	}
 
 	// Process nested links recursively if we haven't reached max depth
@@ -967,7 +973,8 @@ func walk(b *strings.Builder, n *html.Node, indent int) {
 		// If the element has text, print it
 		text := strings.TrimSpace(goquery.NewDocumentFromNode(n).Text())
 		if text != "" {
-			b.WriteString(fmt.Sprintf("%s%s\n", strings.Repeat(" ", indent), text))
+			b.WriteString(fmt.Sprintf("%s\n", text))
+			//b.WriteString(fmt.Sprintf("%s%s\n", strings.Repeat(" ", indent), text))
 			//b.WriteString(fmt.Sprintf("%s[%s] %s\n", strings.Repeat("  ", indent), tag, text))
 		}
 
