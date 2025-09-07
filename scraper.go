@@ -1,10 +1,17 @@
 package main
 
 import (
+	"crypto/md5"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +28,14 @@ type WebScraper struct {
 	allowedUrlPatterns  []string
 	scrapedUrls         []ScrapedUrl
 	enableInternalLinks bool
+	refreshContent      bool
+	cacheDir            string
+	minTextLength       int
+	maxTextLength       int
+	maxScrapingDepth    int
+	visitedUrls         map[string]bool
+	maxPagesPerSession  int
+	scrapedPagesCount   int
 }
 
 type ScrapedUrl struct {
@@ -92,6 +107,47 @@ func NewWebScraper() *WebScraper {
 	// Check if internal link processing is enabled
 	enableInternal := strings.ToLower(os.Getenv("ENABLE_INTERNAL_LINK_SCRAPING")) == "true"
 
+	// Check if content refresh is enabled (default: false for performance)
+	refreshContent := strings.ToLower(os.Getenv("REFRESH_CONTENT")) == "true"
+
+	// Parse minimum text length (default: 10)
+	minTextLength := 10
+	if minTextLengthStr := os.Getenv("MIN_TEXT_LENGTH"); minTextLengthStr != "" {
+		if parsed, err := strconv.Atoi(minTextLengthStr); err == nil && parsed > 0 {
+			minTextLength = parsed
+		}
+	}
+
+	// Parse maximum text length (default: 10000)
+	maxTextLength := 10000
+	if maxTextLengthStr := os.Getenv("MAX_TEXT_LENGTH"); maxTextLengthStr != "" {
+		if parsed, err := strconv.Atoi(maxTextLengthStr); err == nil && parsed > minTextLength {
+			maxTextLength = parsed
+		}
+	}
+
+	// Parse maximum scraping depth (default: 2)
+	maxScrapingDepth := 2
+	if maxDepthStr := os.Getenv("MAX_SCRAPING_DEPTH"); maxDepthStr != "" {
+		if parsed, err := strconv.Atoi(maxDepthStr); err == nil && parsed >= 1 && parsed <= 10 {
+			maxScrapingDepth = parsed
+		}
+	}
+
+	// Parse maximum pages per session (default: 100)
+	maxPagesPerSession := 100
+	if maxPagesStr := os.Getenv("MAX_PAGES_PER_SESSION"); maxPagesStr != "" {
+		if parsed, err := strconv.Atoi(maxPagesStr); err == nil && parsed > 0 {
+			maxPagesPerSession = parsed
+		}
+	}
+
+	// Create cache directory
+	cacheDir := "scraped_content"
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		fmt.Printf("Warning: Could not create cache directory: %v\n", err)
+	}
+
 	return &WebScraper{
 		client: &http.Client{
 			Timeout: 30 * time.Second,
@@ -104,7 +160,172 @@ func NewWebScraper() *WebScraper {
 		allowedUrlPatterns:  allowedUrlPatterns,
 		scrapedUrls:         make([]ScrapedUrl, 0),
 		enableInternalLinks: enableInternal,
+		refreshContent:      refreshContent,
+		cacheDir:            cacheDir,
+		minTextLength:       minTextLength,
+		maxTextLength:       maxTextLength,
+		maxScrapingDepth:    maxScrapingDepth,
+		visitedUrls:         make(map[string]bool),
+		maxPagesPerSession:  maxPagesPerSession,
+		scrapedPagesCount:   0,
 	}
+}
+
+// generateSafeDirectoryName creates a safe directory name from a URL
+func (w *WebScraper) generateSafeDirectoryName(targetUrl string) string {
+	// Parse URL to get domain
+	parsedURL, err := url.Parse(targetUrl)
+	if err != nil {
+		// Fallback to MD5 hash if URL parsing fails
+		hasher := md5.New()
+		hasher.Write([]byte(targetUrl))
+		return hex.EncodeToString(hasher.Sum(nil))
+	}
+
+	// Create a safe directory name: domain + path hash
+	domain := parsedURL.Host
+	path := parsedURL.Path
+	query := parsedURL.RawQuery
+
+	// Remove common prefixes
+	domain = strings.TrimPrefix(domain, "www.")
+	domain = strings.TrimPrefix(domain, "http://")
+	domain = strings.TrimPrefix(domain, "https://")
+
+	// Replace unsafe characters in domain
+	domainSafe := regexp.MustCompile(`[^a-zA-Z0-9.-]`).ReplaceAllString(domain, "_")
+
+	// Create hash of path + query for uniqueness
+	fullPath := path
+	if query != "" {
+		fullPath += "?" + query
+	}
+
+	hasher := md5.New()
+	hasher.Write([]byte(fullPath))
+	pathHash := hex.EncodeToString(hasher.Sum(nil))[:8] // First 8 characters
+
+	if fullPath == "/" || fullPath == "" {
+		return domainSafe
+	}
+
+	return domainSafe + "_" + pathHash
+}
+
+// getContentFilePath returns the file path for storing content
+func (w *WebScraper) getContentFilePath(targetUrl string) string {
+	dirName := w.generateSafeDirectoryName(targetUrl)
+	dirPath := filepath.Join(w.cacheDir, dirName)
+
+	// Create directory if it doesn't exist
+	if err := os.MkdirAll(dirPath, 0755); err != nil {
+		fmt.Printf("Warning: Could not create directory %s: %v\n", dirPath, err)
+	}
+
+	return filepath.Join(dirPath, "content.json")
+}
+
+// saveContentToDisk saves website content to disk
+func (w *WebScraper) saveContentToDisk(targetUrl string, content *WebsiteContent) error {
+	filePath := w.getContentFilePath(targetUrl)
+
+	// Create a wrapper structure to include the URL
+	wrapper := struct {
+		URL     string          `json:"url"`
+		SavedAt time.Time       `json:"saved_at"`
+		Content *WebsiteContent `json:"content"`
+	}{
+		URL:     targetUrl,
+		SavedAt: time.Now(),
+		Content: content,
+	}
+
+	data, err := json.MarshalIndent(wrapper, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal content: %v", err)
+	}
+
+	if err := ioutil.WriteFile(filePath, data, 0644); err != nil {
+		return fmt.Errorf("failed to write file: %v", err)
+	}
+
+	fmt.Printf("Content saved to: %s\n", filePath)
+	return nil
+}
+
+// loadContentFromDisk loads website content from disk
+func (w *WebScraper) loadContentFromDisk(targetUrl string) (*WebsiteContent, error) {
+	filePath := w.getContentFilePath(targetUrl)
+
+	// Check if file exists
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		return nil, fmt.Errorf("content file does not exist")
+	}
+
+	data, err := ioutil.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file: %v", err)
+	}
+
+	wrapper := struct {
+		URL     string          `json:"url"`
+		SavedAt time.Time       `json:"saved_at"`
+		Content *WebsiteContent `json:"content"`
+	}{}
+
+	if err := json.Unmarshal(data, &wrapper); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal content: %v", err)
+	}
+
+	fmt.Printf("Content loaded from: %s (saved at %s)\n", filePath, wrapper.SavedAt.Format("2006-01-02 15:04:05"))
+	return wrapper.Content, nil
+}
+
+// normalizeURL normalizes a URL for consistent loop detection
+func (w *WebScraper) normalizeURL(targetUrl string) string {
+	// Parse URL to normalize it
+	parsedURL, err := url.Parse(strings.ToLower(targetUrl))
+	if err != nil {
+		return strings.ToLower(targetUrl) // fallback
+	}
+
+	// Remove common query parameters that don't affect content
+	query := parsedURL.Query()
+	query.Del("utm_source")
+	query.Del("utm_medium")
+	query.Del("utm_campaign")
+	query.Del("utm_term")
+	query.Del("utm_content")
+	query.Del("ref")
+	query.Del("source")
+	parsedURL.RawQuery = query.Encode()
+
+	// Remove fragment
+	parsedURL.Fragment = ""
+
+	// Remove trailing slash from path
+	if len(parsedURL.Path) > 1 && strings.HasSuffix(parsedURL.Path, "/") {
+		parsedURL.Path = strings.TrimSuffix(parsedURL.Path, "/")
+	}
+
+	return parsedURL.String()
+}
+
+// isURLVisited checks if a URL has been visited (with normalization)
+func (w *WebScraper) isURLVisited(targetUrl string) bool {
+	normalizedUrl := w.normalizeURL(targetUrl)
+	return w.visitedUrls[normalizedUrl]
+}
+
+// markURLVisited marks a URL as visited (with normalization)
+func (w *WebScraper) markURLVisited(targetUrl string) {
+	normalizedUrl := w.normalizeURL(targetUrl)
+	w.visitedUrls[normalizedUrl] = true
+}
+
+// canScrapeMore checks if we can scrape more pages
+func (w *WebScraper) canScrapeMore() bool {
+	return w.scrapedPagesCount < w.maxPagesPerSession
 }
 
 func (w *WebScraper) isUrlAllowed(targetUrl string) bool {
@@ -150,6 +371,9 @@ func (w *WebScraper) GetScrapedUrls() []ScrapedUrl {
 
 func (w *WebScraper) ClearScrapedUrls() {
 	w.scrapedUrls = make([]ScrapedUrl, 0)
+	// Also reset visited URLs and page count for new session
+	w.visitedUrls = make(map[string]bool)
+	w.scrapedPagesCount = 0
 }
 
 func (w *WebScraper) PrintScrapedUrls() {
@@ -209,6 +433,10 @@ func (w *WebScraper) PrintScrapedUrls() {
 }
 
 func (w *WebScraper) ScrapeWebsite(targetUrl string) (*WebsiteContent, error) {
+	return w.scrapeWebsiteWithDepth(targetUrl, 0)
+}
+
+func (w *WebScraper) scrapeWebsiteWithDepth(targetUrl string, depth int) (*WebsiteContent, error) {
 	// Check if the URL is allowed to be scraped
 	if !w.isUrlAllowed(targetUrl) {
 		err := fmt.Errorf("URL not allowed for scraping: %s", targetUrl)
@@ -216,9 +444,22 @@ func (w *WebScraper) ScrapeWebsite(targetUrl string) (*WebsiteContent, error) {
 		return nil, err
 	}
 
+	// Try to load from disk first if refresh is not enabled
+	if !w.refreshContent {
+		if diskContent, err := w.loadContentFromDisk(targetUrl); err == nil {
+			// Check if disk content is not too old (24 hours)
+			if time.Since(diskContent.LastUpdated) < 24*time.Hour {
+				w.recordScrapedUrl(targetUrl, "main", diskContent.Title, true, nil, 0, "disk_cached")
+				w.cache[targetUrl] = *diskContent
+				return diskContent, nil
+			}
+		}
+	}
+
+	// Check memory cache
 	if cached, exists := w.cache[targetUrl]; exists {
 		if time.Since(cached.LastUpdated) < 1*time.Hour {
-			w.recordScrapedUrl(targetUrl, "main", cached.Title, true, nil, 0, "cached")
+			w.recordScrapedUrl(targetUrl, "main", cached.Title, true, nil, 0, "memory_cached")
 			return &cached, nil
 		}
 	}
@@ -273,7 +514,7 @@ func (w *WebScraper) ScrapeWebsite(targetUrl string) (*WebsiteContent, error) {
 	var textParts []string
 	doc.Find("p, h1, h2, h3, h4, h5, h6, article, section, div.content, div.main").Each(func(i int, s *goquery.Selection) {
 		text := strings.TrimSpace(s.Text())
-		if text != "" && len(text) > 10 { // Filter out very short text
+		if text != "" && len(text) > w.minTextLength { // Filter out very short text
 			textParts = append(textParts, text)
 		}
 	})
@@ -296,10 +537,15 @@ func (w *WebScraper) ScrapeWebsite(targetUrl string) (*WebsiteContent, error) {
 
 	w.processPDFs(&content, targetUrl)
 	w.processFiles(&content, targetUrl)
-	w.processLinkedContent(&content, targetUrl)
+	w.processLinkedContentWithDepth(&content, targetUrl, depth)
 
 	// Record successful main page scraping
 	w.recordScrapedUrl(targetUrl, "main", content.Title, true, nil, 0, "website")
+
+	// Save content to disk
+	if err := w.saveContentToDisk(targetUrl, &content); err != nil {
+		fmt.Printf("Warning: Failed to save content to disk: %v\n", err)
+	}
 
 	w.cache[targetUrl] = content
 	return &content, nil
@@ -394,12 +640,23 @@ func (w *WebScraper) resolveURL(baseURL, linkURL string) string {
 	result := resolved.String()
 
 	// Debug logging to help troubleshoot URL resolution issues
-	fmt.Printf("DEBUG: URL Resolution - Base: %s, Link: %s, Result: %s\n", baseURL, linkURL, result)
+	//fmt.Printf("DEBUG: URL Resolution - Base: %s, Link: %s, Result: %s\n", baseURL, linkURL, result)
 
 	return result
 }
 
 func (w *WebScraper) processLinkedContent(content *WebsiteContent, baseURL string) {
+	w.processLinkedContentWithDepth(content, baseURL, 0)
+}
+
+func (w *WebScraper) processLinkedContentWithDepth(content *WebsiteContent, baseURL string, depth int) {
+	// Check if we can continue scraping
+	if depth >= w.maxScrapingDepth || !w.canScrapeMore() {
+		return
+	}
+
+	// Mark current URL as visited
+	w.markURLVisited(baseURL)
 	// Process both professional links and internal navigation links
 	for _, link := range content.Links {
 		shouldProcess := false
@@ -424,11 +681,11 @@ func (w *WebScraper) processLinkedContent(content *WebsiteContent, baseURL strin
 		}
 
 		if shouldProcess {
-			linkedContent, err := w.scrapeLinkedPage(fullURL)
+			linkedContent, err := w.scrapeLinkedPageWithDepth(fullURL, depth)
 			if err == nil && linkedContent != nil {
 				content.LinkedContent[fullURL] = linkedContent
 			}
-			// Note: scrapeLinkedPage handles its own recording
+			// Note: scrapeLinkedPageWithDepth handles its own recording
 		}
 	}
 }
@@ -499,7 +756,24 @@ func (w *WebScraper) isInternalNavigationLink(fullUrl, linkType string) bool {
 	return true
 }
 
-func (w *WebScraper) scrapeLinkedPage(targetUrl string) (*LinkedPageContent, error) {
+//func (w *WebScraper) scrapeLinkedPage(targetUrl string) (*LinkedPageContent, error) {
+//	return w.scrapeLinkedPageWithDepth(targetUrl, 0)
+//}
+
+func (w *WebScraper) scrapeLinkedPageWithDepth(targetUrl string, depth int) (*LinkedPageContent, error) {
+	// Check depth limit and page limit
+	if depth >= w.maxScrapingDepth || !w.canScrapeMore() {
+		return nil, fmt.Errorf("scraping limits reached: depth=%d, pages=%d", depth, w.scrapedPagesCount)
+	}
+
+	// Check if URL already visited
+	if w.isURLVisited(targetUrl) {
+		return nil, fmt.Errorf("URL already visited: %s", targetUrl)
+	}
+
+	// Mark URL as visited
+	w.markURLVisited(targetUrl)
+	w.scrapedPagesCount++
 	// Check if the URL is allowed to be scraped
 	if !w.isUrlAllowed(targetUrl) {
 		err := fmt.Errorf("URL not allowed for scraping: %s", targetUrl)
@@ -550,7 +824,7 @@ func (w *WebScraper) scrapeLinkedPage(targetUrl string) (*LinkedPageContent, err
 
 	// Determine content type and relevance
 	linkedContent.ContentType = w.determineContentType(targetUrl)
-	linkedContent.Relevance = w.calculateRelevance(targetUrl, linkedContent.Title)
+	//linkedContent.Relevance = w.calculateRelevance(targetUrl, linkedContent.Title)
 
 	// Extract description
 	doc.Find("meta[name='description'], meta[property='og:description']").Each(func(i int, s *goquery.Selection) {
@@ -577,7 +851,7 @@ func (w *WebScraper) scrapeLinkedPage(targetUrl string) (*LinkedPageContent, err
 		var textParts []string
 		doc.Find(".user-profile-bio, .repository-description, .markdown-body, .readme").Each(func(i int, s *goquery.Selection) {
 			text := strings.TrimSpace(s.Text())
-			if text != "" && len(text) > 10 {
+			if text != "" && len(text) > w.minTextLength {
 				textParts = append(textParts, text)
 			}
 		})
@@ -587,7 +861,7 @@ func (w *WebScraper) scrapeLinkedPage(targetUrl string) (*LinkedPageContent, err
 		var textParts []string
 		doc.Find(".pv-about-section, .summary, .experience").Each(func(i int, s *goquery.Selection) {
 			text := strings.TrimSpace(s.Text())
-			if text != "" && len(text) > 10 {
+			if text != "" && len(text) > w.minTextLength {
 				textParts = append(textParts, text)
 			}
 		})
@@ -597,7 +871,7 @@ func (w *WebScraper) scrapeLinkedPage(targetUrl string) (*LinkedPageContent, err
 		var textParts []string
 		doc.Find("p, h1, h2, h3, article, .content, .main, .bio, .about, .description").Each(func(i int, s *goquery.Selection) {
 			text := strings.TrimSpace(s.Text())
-			if text != "" && len(text) > 10 && len(text) < 1000 { // Reasonable text length
+			if text != "" && len(text) > w.minTextLength && len(text) < 1000 { // Reasonable text length
 				textParts = append(textParts, text)
 			}
 		})
@@ -609,8 +883,8 @@ func (w *WebScraper) scrapeLinkedPage(targetUrl string) (*LinkedPageContent, err
 		linkedContent.Text = linkedContent.Text[:2000] + "..."
 	}
 
-	// Scrape first-level external links
-	w.scrapeFirstLevelLinks(doc, linkedContent)
+	// Scrape first-level external links with depth awareness
+	w.scrapeFirstLevelLinksWithDepth(doc, linkedContent, depth)
 
 	// Record successful linked page scraping
 	w.recordScrapedUrl(targetUrl, "linked", linkedContent.Title, true, nil, linkedContent.Relevance, linkedContent.ContentType)
@@ -634,51 +908,59 @@ func (w *WebScraper) determineContentType(url string) string {
 	return "general"
 }
 
-func (w *WebScraper) calculateRelevance(url, title string) int {
-	relevance := 5 // Base relevance
-
-	lowerURL := strings.ToLower(url)
-	lowerTitle := strings.ToLower(title)
-
-	// Professional platforms get higher relevance
-	professionalKeywords := []string{"github", "linkedin", "gitlab", "portfolio", "resume", "cv"}
-	for _, keyword := range professionalKeywords {
-		if strings.Contains(lowerURL, keyword) || strings.Contains(lowerTitle, keyword) {
-			relevance += 2
-			break
-		}
-	}
-
-	// Technical content gets bonus
-	techKeywords := []string{"developer", "engineer", "programming", "code", "software", "tech"}
-	for _, keyword := range techKeywords {
-		if strings.Contains(lowerTitle, keyword) {
-			relevance += 1
-			break
-		}
-	}
-
-	// Blog/article content
-	blogKeywords := []string{"blog", "article", "tutorial", "guide"}
-	for _, keyword := range blogKeywords {
-		if strings.Contains(lowerURL, keyword) || strings.Contains(lowerTitle, keyword) {
-			relevance += 1
-			break
-		}
-	}
-
-	// Cap at 10
-	if relevance > 10 {
-		relevance = 10
-	}
-
-	return relevance
-}
+//func (w *WebScraper) calculateRelevance(url, title string) int {
+//	relevance := 5 // Base relevance
+//
+//	lowerURL := strings.ToLower(url)
+//	lowerTitle := strings.ToLower(title)
+//
+//	// Professional platforms get higher relevance
+//	professionalKeywords := []string{"github", "linkedin", "gitlab", "portfolio", "resume", "cv"}
+//	for _, keyword := range professionalKeywords {
+//		if strings.Contains(lowerURL, keyword) || strings.Contains(lowerTitle, keyword) {
+//			relevance += 2
+//			break
+//		}
+//	}
+//
+//	// Technical content gets bonus
+//	techKeywords := []string{"developer", "engineer", "programming", "code", "software", "tech"}
+//	for _, keyword := range techKeywords {
+//		if strings.Contains(lowerTitle, keyword) {
+//			relevance += 1
+//			break
+//		}
+//	}
+//
+//	// Blog/article content
+//	blogKeywords := []string{"blog", "article", "tutorial", "guide"}
+//	for _, keyword := range blogKeywords {
+//		if strings.Contains(lowerURL, keyword) || strings.Contains(lowerTitle, keyword) {
+//			relevance += 1
+//			break
+//		}
+//	}
+//
+//	// Cap at 10
+//	if relevance > 10 {
+//		relevance = 10
+//	}
+//
+//	return relevance
+//}
 
 func (w *WebScraper) scrapeFirstLevelLinks(doc *goquery.Document, linkedContent *LinkedPageContent) {
+	w.scrapeFirstLevelLinksWithDepth(doc, linkedContent, 0)
+}
+
+func (w *WebScraper) scrapeFirstLevelLinksWithDepth(doc *goquery.Document, linkedContent *LinkedPageContent, depth int) {
+	// Check if we can continue scraping deeper
+	if depth+1 >= w.maxScrapingDepth || !w.canScrapeMore() {
+		return
+	}
 	// Extract external links from the current page
 	var firstLevelLinks []FirstLevelLink
-	maxLinks := 5 // Limit to prevent overwhelming data
+	maxLinks := 1000 // Limit to prevent overwhelming data TODO: configure
 
 	doc.Find("a[href]").Each(func(i int, s *goquery.Selection) {
 		if len(firstLevelLinks) >= maxLinks {
@@ -692,7 +974,8 @@ func (w *WebScraper) scrapeFirstLevelLinks(doc *goquery.Document, linkedContent 
 
 		// Make URL absolute if relative
 		if strings.HasPrefix(href, "/") || strings.HasPrefix(href, "./") {
-			return // Skip relative links for now
+			// TODO: fix an error here
+			href = w.resolveURL(linkedContent.URL, href)
 		}
 
 		// Skip if not HTTP/HTTPS
@@ -707,18 +990,31 @@ func (w *WebScraper) scrapeFirstLevelLinks(doc *goquery.Document, linkedContent 
 
 		// Skip if not relevant
 		linkTitle := strings.TrimSpace(s.Text())
-		relevance := w.calculateRelevance(href, linkTitle)
+		//relevance = w.calculateRelevance(href, linkTitle)
+		//
+		//if relevance < 6 { // Only include moderately relevant links
+		//	return
+		//}
 
-		if relevance < 6 { // Only include moderately relevant links
+		// Skip if already visited
+		if w.isURLVisited(href) {
 			return
 		}
 
-		// Try to scrape the first-level page
-		firstLevelContent := w.scrapeFirstLevelPage(href, linkTitle)
+		// Try to scrape the first-level page with recursion
+		firstLevelContent := w.scrapeFirstLevelPageWithDepth(href, linkTitle, depth+1)
 		if firstLevelContent != nil {
 			firstLevelLinks = append(firstLevelLinks, *firstLevelContent)
+
+			// If we haven't reached max depth, recursively scrape this URL as a linked page
+			if depth+2 < w.maxScrapingDepth && !w.isURLVisited(href) {
+				if linkedPageContent, err := w.scrapeLinkedPageWithDepth(href, depth+1); err == nil && linkedPageContent != nil {
+					// Add any discovered links from this recursive scraping
+					// This enables true multi-level recursive discovery
+				}
+			}
 		}
-		// Note: scrapeFirstLevelPage handles its own recording
+		// Note: scrapeFirstLevelPageWithDepth handles its own recording
 	})
 
 	linkedContent.FirstLevelLinks = firstLevelLinks
@@ -736,7 +1032,41 @@ func (w *WebScraper) isSameDomain(url1, url2 string) bool {
 	return false
 }
 
+// parseHTMLFromURL fetches and parses HTML from a URL
+func (w *WebScraper) parseHTMLFromURL(targetUrl string) (*goquery.Document, error) {
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	req, err := http.NewRequest("GET", targetUrl, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; PersonalProfileBot/1.0)")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+
+	return goquery.NewDocumentFromReader(resp.Body)
+}
+
 func (w *WebScraper) scrapeFirstLevelPage(targetUrl, title string) *FirstLevelLink {
+	return w.scrapeFirstLevelPageWithDepth(targetUrl, title, 0)
+}
+
+func (w *WebScraper) scrapeFirstLevelPageWithDepth(targetUrl, title string, depth int) *FirstLevelLink {
+	// Check limits - first level pages can be scraped at any depth under the limit
+	if depth >= w.maxScrapingDepth || !w.canScrapeMore() {
+		return nil
+	}
 	// Check if the URL is allowed to be scraped
 	if !w.isUrlAllowed(targetUrl) {
 		return nil // Silently skip disallowed URLs for first-level links
@@ -800,7 +1130,7 @@ func (w *WebScraper) scrapeFirstLevelPage(targetUrl, title string) *FirstLevelLi
 			return
 		}
 		text := strings.TrimSpace(s.Text())
-		if text != "" && len(text) > 20 && len(text) < 500 {
+		if text != "" && len(text) > w.minTextLength && len(text) < w.maxTextLength {
 			textParts = append(textParts, text)
 		}
 	})
@@ -812,7 +1142,7 @@ func (w *WebScraper) scrapeFirstLevelPage(targetUrl, title string) *FirstLevelLi
 		firstLevelLink.Text = firstLevelLink.Text[:1000] + "..."
 	}
 
-	firstLevelLink.Relevance = w.calculateRelevance(targetUrl, firstLevelLink.Title)
+	//firstLevelLink.Relevance = w.calculateRelevance(targetUrl, firstLevelLink.Title)
 
 	// Only return if there's meaningful content
 	if len(firstLevelLink.Text) > 50 || len(firstLevelLink.Description) > 20 {

@@ -85,10 +85,10 @@ func (c *Chatbot) getRuleBasedResponse(message string) string {
 	lowerMsg := strings.ToLower(message)
 
 	if strings.Contains(lowerMsg, "hello") || strings.Contains(lowerMsg, "hi ") || lowerMsg == "hi" {
-		return "Hello! I'm here to help you learn about John Smith. You can ask me about his background, professional profiles, or any information available on his website."
+		return "Hello! I'm here to help you learn about the content on this website. You can ask me about professional profiles, background information, or any content available on the site."
 	}
 
-	if strings.Contains(lowerMsg, "who") && (strings.Contains(lowerMsg, "Somebody") || strings.Contains(lowerMsg, "turevskiy")) {
+	if strings.Contains(lowerMsg, "who") || strings.Contains(lowerMsg, "about") {
 		return c.getPersonInfo()
 	}
 
@@ -128,17 +128,17 @@ func (c *Chatbot) getRuleBasedResponse(message string) string {
 		return c.getHelpInfo()
 	}
 
-	return `I'm specialized in providing information about John Smith based on his website content. 
+	return `I'm specialized in providing information based on this website's content. 
 
 You can ask me about:
-• His professional background
+• Professional background
 • GitHub projects and code
 • LinkedIn profile
 • Professional blog
 • CV/Resume
-• How to contact him
+• Contact information
 
-Is there something specific you'd like to know about Somebody?`
+Is there something specific you'd like to know?`
 }
 
 func (c *Chatbot) getPersonInfo() string {
@@ -146,16 +146,16 @@ func (c *Chatbot) getPersonInfo() string {
 		return "I'm having trouble accessing the website data right now. Please try again in a moment."
 	}
 
-	return "John Smith appears to be a software professional based on his online presence. His website provides links to various professional profiles including GitHub, GitLab, LinkedIn, and his professional blog. You can ask me about any of these specific areas for more information."
+	return "Based on the website content, this appears to be a professional profile with links to various platforms including GitHub, GitLab, LinkedIn, and a professional blog. You can ask me about any of these specific areas for more information."
 }
 
 func (c *Chatbot) getContactInfo() string {
 	links := c.getProfileLinks()
 	if len(links) == 0 {
-		return "I found several ways to connect with Somebody: through his GitHub, GitLab, LinkedIn profiles, or his professional blog."
+		return "I found several ways to connect: through GitHub, GitLab, LinkedIn profiles, or the professional blog."
 	}
 
-	response := "Here are the ways to connect with John Smith:\n"
+	response := "Here are the ways to connect:\n"
 	for _, link := range links {
 		response += fmt.Sprintf("• %s: %s\n", link.Title, link.URL)
 	}
@@ -165,31 +165,31 @@ func (c *Chatbot) getContactInfo() string {
 func (c *Chatbot) getGitHubInfo() string {
 	github := c.findLinkByKeyword("github")
 	if github != nil {
-		return fmt.Sprintf("You can find Somebody's code and projects on his GitHub profile: %s", github.URL)
+		return fmt.Sprintf("You can find code and projects on the GitHub profile: %s", github.URL)
 	}
-	return "Somebody has a GitHub profile where you can explore his code and projects."
+	return "There is a GitHub profile where you can explore code and projects."
 }
 
 func (c *Chatbot) getLinkedInInfo() string {
 	linkedin := c.findLinkByKeyword("linkedin")
 	if linkedin != nil {
-		return fmt.Sprintf("For professional information about Somebody, check his LinkedIn profile: %s", linkedin.URL)
+		return fmt.Sprintf("For professional information, check the LinkedIn profile: %s", linkedin.URL)
 	}
-	return "Somebody maintains a LinkedIn profile with his professional information."
+	return "There is a LinkedIn profile with professional information."
 }
 
 func (c *Chatbot) getBlogInfo() string {
 	blog := c.findLinkByKeyword("blog")
 	if blog != nil {
-		return fmt.Sprintf("Somebody shares his thoughts and expertise on his professional blog: %s", blog.URL)
+		return fmt.Sprintf("Thoughts and expertise are shared on the professional blog: %s", blog.URL)
 	}
-	return "Somebody has a professional blog where he shares insights and expertise."
+	return "There is a professional blog where insights and expertise are shared."
 }
 
 func (c *Chatbot) getCVInfo() string {
 	cv := c.findLinkByKeyword("cv")
 	if cv != nil {
-		response := fmt.Sprintf("You can view Somebody's CV/Resume here: %s", cv.URL)
+		response := fmt.Sprintf("You can view the CV/Resume here: %s", cv.URL)
 
 		if c.websiteData != nil && c.websiteData.PDFContent != nil {
 			if pdfContent, exists := c.websiteData.PDFContent[cv.URL]; exists {
@@ -210,7 +210,7 @@ func (c *Chatbot) getCVInfo() string {
 
 		return response
 	}
-	return "Somebody's CV/Resume is available on his website."
+	return "A CV/Resume is available on this website."
 }
 
 func (c *Chatbot) getHelpInfo() string {
@@ -219,7 +219,7 @@ func (c *Chatbot) getHelpInfo() string {
 		aiStatus = " (Enhanced with CodeLlama AI analysis)"
 	}
 
-	return fmt.Sprintf(`I can help you learn about John Smith! Here's what you can ask me about%s:
+	return fmt.Sprintf(`I can help you learn about this website's content! Here's what you can ask me about%s:
 
 • Personal and professional background
 • GitHub profile and projects
@@ -232,7 +232,7 @@ func (c *Chatbot) getHelpInfo() string {
 • Contact information
 • GitLab profile
 
-I can analyze PDF documents (like his CV) using advanced AI to provide detailed insights about skills, experience, and education. You can also ask me general questions and I'll provide intelligent responses based on all available website content.
+I can analyze PDF documents (like CVs) using advanced AI to provide detailed insights about skills, experience, and education. You can also ask me general questions and I'll provide intelligent responses based on all available website content.
 
 Just ask me anything about these topics!`, aiStatus)
 }
@@ -305,7 +305,7 @@ func (c *Chatbot) getSkillsInfo() string {
 			if c.ollamaService != nil && c.ollamaService.IsEnabled() {
 				aiAnalysis, err := c.ollamaService.AnalyzePDFContent(pdfContent, "Extract and analyze all technical skills, programming languages, frameworks, and technologies mentioned in this CV. Organize them by category.")
 				if err == nil {
-					return fmt.Sprintf("AI Analysis of Somebody's Technical Skills:\n%s\n\nFor more details, check his CV and GitHub profile.", aiAnalysis)
+					return fmt.Sprintf("AI Analysis of Technical Skills:\n%s\n\nFor more details, check the CV and GitHub profile.", aiAnalysis)
 				}
 			}
 
@@ -313,12 +313,12 @@ func (c *Chatbot) getSkillsInfo() string {
 			keyInfo := extractor.ExtractKeyInformation(pdfContent)
 
 			if skills, exists := keyInfo["skills"]; exists && skills != "" {
-				return fmt.Sprintf("Based on Somebody's CV, here are his technical skills:\n%s\n\nFor more details, check his CV and GitHub profile.", skills)
+				return fmt.Sprintf("Based on the CV, here are the technical skills:\n%s\n\nFor more details, check the CV and GitHub profile.", skills)
 			}
 		}
 	}
 
-	return "You can find information about Somebody's technical skills in his CV and by exploring his GitHub projects. His GitHub profile showcases his practical experience with various technologies."
+	return "You can find information about technical skills in the CV and by exploring GitHub projects. The GitHub profile showcases practical experience with various technologies."
 }
 
 func (c *Chatbot) getExperienceInfo() string {
@@ -327,7 +327,7 @@ func (c *Chatbot) getExperienceInfo() string {
 			if c.ollamaService != nil && c.ollamaService.IsEnabled() {
 				aiAnalysis, err := c.ollamaService.AnalyzePDFContent(pdfContent, "Analyze and summarize the professional work experience, including companies, roles, responsibilities, and key achievements. Focus on career progression and impact.")
 				if err == nil {
-					return fmt.Sprintf("AI Analysis of Somebody's Professional Experience:\n%s\n\nFor complete work history, please check his full CV and LinkedIn profile.", aiAnalysis)
+					return fmt.Sprintf("AI Analysis of Professional Experience:\n%s\n\nFor complete work history, please check the full CV and LinkedIn profile.", aiAnalysis)
 				}
 			}
 
@@ -337,13 +337,13 @@ func (c *Chatbot) getExperienceInfo() string {
 			if experience, exists := keyInfo["experience"]; exists && experience != "" {
 				experienceItems := strings.Split(experience, ";")
 				if len(experienceItems) > 0 {
-					return fmt.Sprintf("Here's information about Somebody's professional experience:\n\n%s\n\nFor complete work history, please check his full CV and LinkedIn profile.", strings.Join(experienceItems[:minInt(3, len(experienceItems))], "\n\n"))
+					return fmt.Sprintf("Here's information about professional experience:\n\n%s\n\nFor complete work history, please check the full CV and LinkedIn profile.", strings.Join(experienceItems[:minInt(3, len(experienceItems))], "\n\n"))
 				}
 			}
 		}
 	}
 
-	return "You can find detailed information about Somebody's work experience in his CV and LinkedIn profile. His GitHub and GitLab profiles also showcase his project experience."
+	return "You can find detailed information about work experience in the CV and LinkedIn profile. The GitHub and GitLab profiles also showcase project experience."
 }
 
 func (c *Chatbot) getEducationInfo() string {
@@ -352,7 +352,7 @@ func (c *Chatbot) getEducationInfo() string {
 			if c.ollamaService != nil && c.ollamaService.IsEnabled() {
 				aiAnalysis, err := c.ollamaService.AnalyzePDFContent(pdfContent, "Extract and analyze educational background including degrees, institutions, graduation dates, academic achievements, and relevant coursework.")
 				if err == nil {
-					return fmt.Sprintf("AI Analysis of Somebody's Educational Background:\n%s\n\nFor more details, check his full CV.", aiAnalysis)
+					return fmt.Sprintf("AI Analysis of Educational Background:\n%s\n\nFor more details, check the full CV.", aiAnalysis)
 				}
 			}
 
@@ -361,12 +361,12 @@ func (c *Chatbot) getEducationInfo() string {
 
 			if education, exists := keyInfo["education"]; exists && education != "" {
 				educationItems := strings.Split(education, ";")
-				return fmt.Sprintf("Here's information about Somebody's educational background:\n\n%s\n\nFor more details, check his full CV.", strings.Join(educationItems, "\n"))
+				return fmt.Sprintf("Here's information about educational background:\n\n%s\n\nFor more details, check the full CV.", strings.Join(educationItems, "\n"))
 			}
 		}
 	}
 
-	return "Information about Somebody's educational background can be found in his CV/Resume. Please check the CV link for complete academic details."
+	return "Information about educational background can be found in the CV/Resume. Please check the CV link for complete academic details."
 }
 
 func minInt(a, b int) int {

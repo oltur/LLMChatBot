@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"path/filepath"
 
@@ -56,21 +57,30 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	var req ChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("Error decoding JSON request: %v", err)
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid JSON format"})
+		if encErr := json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid JSON format"}); encErr != nil {
+			log.Printf("Error encoding error response: %v", encErr)
+		}
 		return
 	}
 
 	if req.Message == "" {
+		log.Printf("Received empty message request")
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Message cannot be empty"})
+		if err := json.NewEncoder(w).Encode(ErrorResponse{Error: "Message cannot be empty"}); err != nil {
+			log.Printf("Error encoding error response: %v", err)
+		}
 		return
 	}
 
 	chatMessage, err := s.chatbot.ProcessMessage(req.Message)
 	if err != nil {
+		log.Printf("Error processing chat message '%s': %v", req.Message, err)
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Failed to process message"})
+		if encErr := json.NewEncoder(w).Encode(ErrorResponse{Error: "Failed to process message"}); encErr != nil {
+			log.Printf("Error encoding error response: %v", encErr)
+		}
 		return
 	}
 
@@ -80,11 +90,15 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(response)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("Error encoding chat response: %v", err)
+	}
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "healthy"}); err != nil {
+		log.Printf("Error encoding health response: %v", err)
+	}
 }

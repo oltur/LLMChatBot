@@ -124,7 +124,7 @@ func (s *OllamaService) AnalyzePDFContent(pdfContent *PDFContent, question strin
 
 	content := pdfContent.Text
 
-	prompt := fmt.Sprintf(`You are an AI assistant analyzing John Smith's CV/Resume. 
+	prompt := fmt.Sprintf(`You are an AI assistant analyzing a CV/Resume. 
 
 CV Content:
 %s
@@ -198,7 +198,7 @@ func (s *OllamaService) GenerateIntelligentResponse(websiteContent *WebsiteConte
 	var contentBuilder strings.Builder
 
 	if websiteContent != nil {
-		contentBuilder.WriteString("=== COMPREHENSIVE John Smith PROFILE ===\n\n")
+		contentBuilder.WriteString("=== COMPREHENSIVE PROFILE ===\n\n")
 
 		// Include main website content
 		if websiteContent.Title != "" {
@@ -245,9 +245,9 @@ func (s *OllamaService) GenerateIntelligentResponse(websiteContent *WebsiteConte
 				if linkedContent.ContentType != "" {
 					contentBuilder.WriteString(fmt.Sprintf("Content Type: %s\n", linkedContent.ContentType))
 				}
-				if linkedContent.Relevance > 0 {
-					contentBuilder.WriteString(fmt.Sprintf("Relevance Score: %d/10\n", linkedContent.Relevance))
-				}
+				//if linkedContent.Relevance > 0 {
+				//	contentBuilder.WriteString(fmt.Sprintf("Relevance Score: %d/10\n", linkedContent.Relevance))
+				//}
 				if len(linkedContent.Keywords) > 0 {
 					contentBuilder.WriteString(fmt.Sprintf("Keywords: %s\n", strings.Join(linkedContent.Keywords, ", ")))
 				}
@@ -317,7 +317,7 @@ func (s *OllamaService) GenerateIntelligentResponse(websiteContent *WebsiteConte
 		}
 	}
 
-	prompt := fmt.Sprintf(`You are an intelligent assistant with comprehensive information about John Smith. You have access to:
+	prompt := fmt.Sprintf(`You are an intelligent assistant with comprehensive information about this website. You have access to:
 - His main website content and metadata
 - Full CV/resume documents with detailed professional information
 - Content from external professional profiles (GitHub, LinkedIn, etc.)
