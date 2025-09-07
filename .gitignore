@@ -1,3 +1,5 @@
 .idea/
 /static/
 /turevskiy-chatbot
+/.env
+/scraped_content
