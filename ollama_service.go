@@ -420,8 +420,9 @@ CONTENT:
 INSTRUCTIONS:
 1. Analyze the provided title and content
 2. Provide relevant summary under 1000 characters based on the content
+3. Preserve names, factual data, and numbers
 
-Please provide an extended comprehensive summary based on the web page content above, to be used in further LLM analysis.`, content)
+Please provide an extended comprehensive summary based on the web page content above, to be used in further LLM analysis.`, title, content)
 
 	return s.generateResponse(prompt)
 }

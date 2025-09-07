@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/md5"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -38,6 +39,7 @@ type WebScraper struct {
 	visitedUrls         map[string]bool
 	maxPagesPerSession  int
 	scrapedPagesCount   int
+	ollamaService       *OllamaService
 }
 
 type ScrapedUrl struct {
@@ -61,6 +63,7 @@ type WebsiteContent struct {
 	LinkedContent map[string]*LinkedPageContent
 	Metadata      map[string]string
 	LastUpdated   time.Time
+	ContentHash   string // SHA256 hash of raw page content
 }
 
 type LinkedPageContent struct {
@@ -73,6 +76,7 @@ type LinkedPageContent struct {
 	ContentType     string // "professional", "blog", "project", "general"
 	FirstLevelLinks []FirstLevelLink
 	LastUpdated     time.Time
+	ContentHash     string // SHA256 hash of raw page content
 }
 
 type FirstLevelLink struct {
@@ -90,7 +94,7 @@ type Link struct {
 	Type  string
 }
 
-func NewWebScraper() *WebScraper {
+func NewWebScraper(ollamaService *OllamaService) *WebScraper {
 	// Parse allowed URL patterns from environment variable
 	allowedPatternsStr := os.Getenv("ALLOWED_SCRAPING_URL_PATTERNS")
 	var allowedUrlPatterns []string
@@ -170,6 +174,7 @@ func NewWebScraper() *WebScraper {
 		visitedUrls:         make(map[string]bool),
 		maxPagesPerSession:  maxPagesPerSession,
 		scrapedPagesCount:   0,
+		ollamaService:       ollamaService,
 	}
 }
 
@@ -330,6 +335,45 @@ func (w *WebScraper) canScrapeMore() bool {
 	return w.scrapedPagesCount < w.maxPagesPerSession
 }
 
+// calculateContentHash generates SHA256 hash of raw HTML content
+func (w *WebScraper) calculateContentHash(htmlContent string) string {
+	hasher := sha256.New()
+	hasher.Write([]byte(htmlContent))
+	return hex.EncodeToString(hasher.Sum(nil))
+}
+
+// findContentByHash searches for existing content with the same hash
+func (w *WebScraper) findContentByHash(contentHash string) (*WebsiteContent, error) {
+	// Search through all cached content files
+	entries, err := os.ReadDir(w.cacheDir)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			contentFile := filepath.Join(w.cacheDir, entry.Name(), "content.json")
+			if data, err := ioutil.ReadFile(contentFile); err == nil {
+				wrapper := struct {
+					URL     string          `json:"url"`
+					SavedAt time.Time       `json:"saved_at"`
+					Content *WebsiteContent `json:"content"`
+				}{}
+
+				if err := json.Unmarshal(data, &wrapper); err == nil {
+					if wrapper.Content != nil && wrapper.Content.ContentHash == contentHash {
+						fmt.Printf("Found existing content with matching hash: %s (original URL: %s)\n",
+							contentHash[:8], wrapper.URL)
+						return wrapper.Content, nil
+					}
+				}
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("no content found with hash %s", contentHash)
+}
+
 func (w *WebScraper) isUrlAllowed(targetUrl string) bool {
 	// If no allowed URL patterns are configured, allow all URLs
 	if len(w.allowedUrlPatterns) == 0 {
@@ -438,14 +482,90 @@ func (w *WebScraper) ScrapeWebsite(targetUrl string) (*WebsiteContent, error) {
 	return w.scrapeWebsiteWithDepth(targetUrl, 0)
 }
 
-func (w *WebScraper) scrapeWebsiteWithDepth(targetUrl string, depth int) (*WebsiteContent, error) {
+// Common page scraping function that both main and linked page scrapers can use
+func (w *WebScraper) scrapePage(targetUrl string, depth int, urlType string, useCache bool) (*goquery.Document, string, string, error) {
+	// Check depth limit and page limit
+	if depth >= w.maxScrapingDepth || !w.canScrapeMore() {
+		return nil, "", "", fmt.Errorf("scraping limits reached: depth=%d, pages=%d", depth, w.scrapedPagesCount)
+	}
+
+	// Check if URL already visited (for linked pages)
+	if urlType == "linked" && w.isURLVisited(targetUrl) {
+		return nil, "", "", fmt.Errorf("URL already visited: %s", targetUrl)
+	}
+
 	// Check if the URL is allowed to be scraped
 	if !w.isUrlAllowed(targetUrl) {
 		err := fmt.Errorf("URL not allowed for scraping: %s", targetUrl)
-		w.recordScrapedUrl(targetUrl, "main", "", false, err, 0, "")
-		return nil, err
+		w.recordScrapedUrl(targetUrl, urlType, "", false, err, 0, "")
+		return nil, "", "", err
 	}
 
+	// Mark URL as visited and increment counter for linked pages
+	if urlType == "linked" {
+		w.markURLVisited(targetUrl)
+		w.scrapedPagesCount++
+		log.Printf("Scraping linked page (depth %d): %s\n", depth, targetUrl)
+	}
+
+	var client *http.Client
+	if urlType == "main" {
+		client = w.client
+	} else {
+		client = &http.Client{Timeout: 15 * time.Second}
+	}
+
+	var resp *http.Response
+	var err error
+
+	if urlType == "main" {
+		resp, err = client.Get(targetUrl)
+	} else {
+		req, reqErr := http.NewRequest("GET", targetUrl, nil)
+		if reqErr != nil {
+			w.recordScrapedUrl(targetUrl, urlType, "", false, reqErr, 0, "")
+			return nil, "", "", reqErr
+		}
+		req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; WebSiteAssistantBot/1.0)")
+		resp, err = client.Do(req)
+	}
+
+	if err != nil {
+		w.recordScrapedUrl(targetUrl, urlType, "", false, err, 0, "")
+		return nil, "", "", fmt.Errorf("failed to fetch URL %s: %v", targetUrl, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		err := fmt.Errorf("HTTP %d", resp.StatusCode)
+		w.recordScrapedUrl(targetUrl, urlType, "", false, err, 0, "")
+		return nil, "", "", err
+	}
+
+	// Read the raw HTML content
+	htmlBytes, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		w.recordScrapedUrl(targetUrl, urlType, "", false, err, 0, "")
+		return nil, "", "", fmt.Errorf("failed to read response body: %v", err)
+	}
+
+	htmlContent := string(htmlBytes)
+
+	// Calculate content hash
+	contentHash := w.calculateContentHash(htmlContent)
+
+	// Parse HTML using strings.Reader since we already read the body
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(htmlContent))
+	if err != nil {
+		w.recordScrapedUrl(targetUrl, urlType, "", false, err, 0, "")
+		return nil, "", "", fmt.Errorf("failed to parse HTML: %v", err)
+	}
+
+	title := strings.TrimSpace(doc.Find("title").First().Text())
+	return doc, title, contentHash, nil
+}
+
+func (w *WebScraper) scrapeWebsiteWithDepth(targetUrl string, depth int) (*WebsiteContent, error) {
 	// Try to load from disk first if refresh is not enabled
 	if !w.refreshContent {
 		if diskContent, err := w.loadContentFromDisk(targetUrl); err == nil {
@@ -466,17 +586,26 @@ func (w *WebScraper) scrapeWebsiteWithDepth(targetUrl string, depth int) (*Websi
 		}
 	}
 
-	resp, err := w.client.Get(targetUrl)
+	doc, title, contentHash, err := w.scrapePage(targetUrl, depth, "main", true)
 	if err != nil {
-		w.recordScrapedUrl(targetUrl, "main", "", false, err, 0, "")
-		return nil, fmt.Errorf("failed to fetch URL %s: %v", targetUrl, err)
+		return nil, err
 	}
-	defer resp.Body.Close()
 
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
-	if err != nil {
-		w.recordScrapedUrl(targetUrl, "main", "", false, err, 0, "")
-		return nil, fmt.Errorf("failed to parse HTML: %v", err)
+	// Check if we already have content with the same hash
+	if existingContent, err := w.findContentByHash(contentHash); err == nil {
+		// Clone the existing content but update URL-specific fields
+		content := *existingContent
+		content.LastUpdated = time.Now()
+
+		// Save to current URL's cache location and memory cache
+		w.cache[targetUrl] = content
+		if saveErr := w.saveContentToDisk(targetUrl, &content); saveErr != nil {
+			fmt.Printf("Warning: Failed to save reused content to disk: %v\n", saveErr)
+		}
+
+		w.recordScrapedUrl(targetUrl, "main", content.Title, true, nil, 0, "content_reused")
+		fmt.Printf("Reused existing content for: %s (hash: %s)\n", targetUrl, contentHash[:8])
+		return &content, nil
 	}
 
 	content := WebsiteContent{
@@ -485,9 +614,10 @@ func (w *WebScraper) scrapeWebsiteWithDepth(targetUrl string, depth int) (*Websi
 		FileContent:   make(map[string]*FileContent),
 		LinkedContent: make(map[string]*LinkedPageContent),
 		Metadata:      make(map[string]string),
+		ContentHash:   contentHash,
 	}
 
-	content.Title = strings.TrimSpace(doc.Find("title").First().Text())
+	content.Title = title
 
 	// Extract meta information
 	doc.Find("meta").Each(func(i int, s *goquery.Selection) {
@@ -520,7 +650,30 @@ func (w *WebScraper) scrapeWebsiteWithDepth(targetUrl string, depth int) (*Websi
 			textParts = append(textParts, text)
 		}
 	})
-	content.Text = strings.Join(textParts, "\n\n")
+	fullText := strings.Join(textParts, "\n\n")
+
+	// Use Ollama to summarize the content if service is available
+	if w.ollamaService != nil && w.ollamaService.IsEnabled() && fullText != "" {
+		if summary, err := w.ollamaService.SummarizeContent(title, fullText); err == nil {
+			content.Text = summary
+			fmt.Printf("Content summarized for main page: %s\n", targetUrl)
+		} else {
+			fmt.Printf("Warning: Failed to summarize main page content: %v\n", err)
+			// Fallback to truncated original content
+			if len(fullText) > w.maxContentLength {
+				content.Text = fullText[:w.maxContentLength] + "..."
+			} else {
+				content.Text = fullText
+			}
+		}
+	} else {
+		// No summarization available, use original logic
+		if len(fullText) > w.maxContentLength {
+			content.Text = fullText[:w.maxContentLength] + "..."
+		} else {
+			content.Text = fullText
+		}
+	}
 
 	doc.Find("a[href]").Each(func(i int, s *goquery.Selection) {
 		if href, exists := s.Attr("href"); exists {
@@ -775,68 +928,41 @@ func (w *WebScraper) isInternalNavigationLink(fullUrl, linkType string) bool {
 //}
 
 func (w *WebScraper) scrapeLinkedPageWithDepthAndContent(targetUrl string, depth int, mainContent *WebsiteContent) (*LinkedPageContent, error) {
-	// Check depth limit and page limit
-	if depth >= w.maxScrapingDepth || !w.canScrapeMore() {
-		return nil, fmt.Errorf("scraping limits reached: depth=%d, pages=%d", depth, w.scrapedPagesCount)
-	}
-
-	// Check if URL already visited
-	if w.isURLVisited(targetUrl) {
-		return nil, fmt.Errorf("URL already visited: %s", targetUrl)
-	}
-
-	log.Printf("Scraping linked page (depth %d): %s\n", depth, targetUrl)
-
-	// Mark URL as visited
-	w.markURLVisited(targetUrl)
-	w.scrapedPagesCount++
-	// Check if the URL is allowed to be scraped
-	if !w.isUrlAllowed(targetUrl) {
-		err := fmt.Errorf("URL not allowed for scraping: %s", targetUrl)
-		w.recordScrapedUrl(targetUrl, "linked", "", false, err, 0, "")
-		return nil, err
-	}
-
-	client := &http.Client{
-		Timeout: 15 * time.Second,
-	}
-
-	req, err := http.NewRequest("GET", targetUrl, nil)
+	doc, title, contentHash, err := w.scrapePage(targetUrl, depth, "linked", false)
 	if err != nil {
-		w.recordScrapedUrl(targetUrl, "linked", "", false, err, 0, "")
 		return nil, err
 	}
 
-	// Add user agent to avoid being blocked
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; WebSiteAssistantBot/1.0)")
+	// Check if we already have content with the same hash
+	if existingContent, err := w.findContentByHash(contentHash); err == nil {
+		// For linked content, we need to find existing LinkedPageContent
+		// Search for existing linked page content with same hash
+		for _, existingLinkedContent := range existingContent.LinkedContent {
+			if existingLinkedContent.ContentHash == contentHash {
+				// Clone and update the existing linked content
+				linkedContent := *existingLinkedContent
+				linkedContent.URL = targetUrl
+				linkedContent.LastUpdated = time.Now()
 
-	resp, err := client.Do(req)
-	if err != nil {
-		w.recordScrapedUrl(targetUrl, "linked", "", false, err, 0, "")
-		return nil, err
-	}
-	defer resp.Body.Close()
+				// Add to main content if provided
+				if mainContent != nil {
+					mainContent.LinkedContent[targetUrl] = &linkedContent
+				}
 
-	if resp.StatusCode != http.StatusOK {
-		err := fmt.Errorf("HTTP %d", resp.StatusCode)
-		w.recordScrapedUrl(targetUrl, "linked", "", false, err, 0, "")
-		return nil, err
-	}
-
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
-	if err != nil {
-		w.recordScrapedUrl(targetUrl, "linked", "", false, err, 0, "")
-		return nil, err
+				w.recordScrapedUrl(targetUrl, "linked", linkedContent.Title, true, nil, linkedContent.Relevance, "content_reused")
+				fmt.Printf("Reused existing linked content for: %s (hash: %s)\n", targetUrl, contentHash[:8])
+				return &linkedContent, nil
+			}
+		}
 	}
 
 	linkedContent := &LinkedPageContent{
 		URL:             targetUrl,
+		Title:           title,
 		LastUpdated:     time.Now(),
 		FirstLevelLinks: make([]FirstLevelLink, 0),
+		ContentHash:     contentHash,
 	}
-
-	// Extract title
-	linkedContent.Title = strings.TrimSpace(doc.Find("title").First().Text())
 
 	// Determine content type and relevance
 	linkedContent.ContentType = w.determineContentType(targetUrl)
@@ -902,18 +1028,29 @@ func (w *WebScraper) scrapeLinkedPageWithDepthAndContent(targetUrl string, depth
 		walk(&b, s.Nodes[0], 0)
 	})
 
-	linkedContent.Text = b.String()
+	fullText := b.String()
 
-	// will be done later
-	//// Compile regex: one or more whitespace chars
-	//re := regexp.MustCompile(`\s+`)
-	//
-	//// Replace with single space
-	//linkedContent.Text = re.ReplaceAllString(linkedContent.Text, " ")
-
-	// Limit content size to avoid overwhelming the AI TODO: configure
-	if len(linkedContent.Text) > w.maxContentLength {
-		linkedContent.Text = linkedContent.Text[:w.maxContentLength] + "..."
+	// Use Ollama to summarize the linked content if service is available
+	if w.ollamaService != nil && w.ollamaService.IsEnabled() && fullText != "" {
+		if summary, err := w.ollamaService.SummarizeContent(linkedContent.Title, fullText); err == nil {
+			linkedContent.Text = summary
+			fmt.Printf("Content summarized for linked page: %s\n", targetUrl)
+		} else {
+			fmt.Printf("Warning: Failed to summarize linked page content: %v\n", err)
+			// Fallback to truncated original content
+			if len(fullText) > w.maxContentLength {
+				linkedContent.Text = fullText[:w.maxContentLength] + "..."
+			} else {
+				linkedContent.Text = fullText
+			}
+		}
+	} else {
+		// No summarization available, use original logic
+		if len(fullText) > w.maxContentLength {
+			linkedContent.Text = fullText[:w.maxContentLength] + "..."
+		} else {
+			linkedContent.Text = fullText
+		}
 	}
 
 	// Process nested links recursively if we haven't reached max depth

@@ -19,8 +19,8 @@ func main() {
 		log.Fatal("WEBSITE_URL environment variable is required")
 	}
 
-	scraper := NewWebScraper()
 	ollamaService := NewOllamaService()
+	scraper := NewWebScraper(ollamaService)
 	chatbot := NewChatbot(scraper, ollamaService)
 	server := NewServer(chatbot)
 
