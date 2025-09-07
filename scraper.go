@@ -33,7 +33,7 @@ type WebScraper struct {
 	refreshContent      bool
 	cacheDir            string
 	minTextLength       int
-	maxTextLength       int
+	maxContentLength    int
 	maxScrapingDepth    int
 	visitedUrls         map[string]bool
 	maxPagesPerSession  int
@@ -121,10 +121,10 @@ func NewWebScraper() *WebScraper {
 	}
 
 	// Parse maximum text length (default: 10000)
-	maxTextLength := 10000
-	if maxTextLengthStr := os.Getenv("MAX_TEXT_LENGTH"); maxTextLengthStr != "" {
-		if parsed, err := strconv.Atoi(maxTextLengthStr); err == nil && parsed > minTextLength {
-			maxTextLength = parsed
+	maxContentLength := 10000
+	if maxContentLengthStr := os.Getenv("MAX_CONTENT_LENGTH"); maxContentLengthStr != "" {
+		if parsed, err := strconv.Atoi(maxContentLengthStr); err == nil && parsed > minTextLength {
+			maxContentLength = parsed
 		}
 	}
 
@@ -165,7 +165,7 @@ func NewWebScraper() *WebScraper {
 		refreshContent:      refreshContent,
 		cacheDir:            cacheDir,
 		minTextLength:       minTextLength,
-		maxTextLength:       maxTextLength,
+		maxContentLength:    maxContentLength,
 		maxScrapingDepth:    maxScrapingDepth,
 		visitedUrls:         make(map[string]bool),
 		maxPagesPerSession:  maxPagesPerSession,
@@ -647,9 +647,9 @@ func (w *WebScraper) resolveURL(baseURL, linkURL string) string {
 	return result
 }
 
-func (w *WebScraper) processLinkedContent(content *WebsiteContent, baseURL string) {
-	w.processLinkedContentWithDepth(content, baseURL, 0)
-}
+//func (w *WebScraper) processLinkedContent(content *WebsiteContent, baseURL string) {
+//	w.processLinkedContentWithDepth(content, baseURL, 0)
+//}
 
 func (w *WebScraper) processLinkedContentWithDepth(content *WebsiteContent, baseURL string, depth int) {
 	// Check if we can continue scraping
@@ -659,6 +659,7 @@ func (w *WebScraper) processLinkedContentWithDepth(content *WebsiteContent, base
 
 	// Mark current URL as visited
 	w.markURLVisited(baseURL)
+
 	// Process both professional links and internal navigation links
 	for _, link := range content.Links {
 		shouldProcess := false
@@ -683,11 +684,11 @@ func (w *WebScraper) processLinkedContentWithDepth(content *WebsiteContent, base
 		}
 
 		if shouldProcess {
-			linkedContent, err := w.scrapeLinkedPageWithDepth(fullURL, depth)
+			linkedContent, err := w.scrapeLinkedPageWithDepthAndContent(fullURL, depth+1, content)
 			if err == nil && linkedContent != nil {
 				content.LinkedContent[fullURL] = linkedContent
 			}
-			// Note: scrapeLinkedPageWithDepth handles its own recording
+			// Note: scrapeLinkedPageWithDepth handles its own recording and recursion
 		}
 	}
 }
@@ -762,7 +763,11 @@ func (w *WebScraper) isInternalNavigationLink(fullUrl, linkType string) bool {
 //	return w.scrapeLinkedPageWithDepth(targetUrl, 0)
 //}
 
-func (w *WebScraper) scrapeLinkedPageWithDepth(targetUrl string, depth int) (*LinkedPageContent, error) {
+//func (w *WebScraper) scrapeLinkedPageWithDepth(targetUrl string, depth int) (*LinkedPageContent, error) {
+//	return w.scrapeLinkedPageWithDepthAndContent(targetUrl, depth, nil)
+//}
+
+func (w *WebScraper) scrapeLinkedPageWithDepthAndContent(targetUrl string, depth int, mainContent *WebsiteContent) (*LinkedPageContent, error) {
 	// Check depth limit and page limit
 	if depth >= w.maxScrapingDepth || !w.canScrapeMore() {
 		return nil, fmt.Errorf("scraping limits reached: depth=%d, pages=%d", depth, w.scrapedPagesCount)
@@ -796,7 +801,7 @@ func (w *WebScraper) scrapeLinkedPageWithDepth(targetUrl string, depth int) (*Li
 	}
 
 	// Add user agent to avoid being blocked
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; PersonalProfileBot/1.0)")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; WebSiteAssistantBot/1.0)")
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -892,12 +897,57 @@ func (w *WebScraper) scrapeLinkedPageWithDepth(targetUrl string, depth int) (*Li
 	linkedContent.Text = b.String()
 
 	// Limit content size to avoid overwhelming the AI TODO: configure
-	if len(linkedContent.Text) > 10000 {
-		linkedContent.Text = linkedContent.Text[:10000] + "..."
+	if len(linkedContent.Text) > 1000 {
+		linkedContent.Text = linkedContent.Text[:1000] + "..."
 	}
 
-	// Scrape first-level external links with depth awareness
-	w.scrapeFirstLevelLinksWithDepth(doc, linkedContent, depth)
+	// Process nested links recursively if we haven't reached max depth
+	if depth+1 < w.maxScrapingDepth && w.canScrapeMore() {
+		// Find and process external links from this page
+		doc.Find("a[href]").Each(func(i int, s *goquery.Selection) {
+			href, exists := s.Attr("href")
+			if !exists {
+				return
+			}
+
+			// Resolve relative URLs
+			fullURL := href
+			if strings.HasPrefix(href, "/") || strings.HasPrefix(href, "./") {
+				fullURL = w.resolveURL(targetUrl, href)
+			}
+
+			// Skip if not HTTP/HTTPS
+			if !strings.HasPrefix(fullURL, "http") {
+				return
+			}
+
+			// Skip same domain links to avoid circular scraping
+			if w.isSameDomain(targetUrl, fullURL) {
+				return
+			}
+
+			// Skip if already visited
+			if w.isURLVisited(fullURL) {
+				return
+			}
+
+			// Skip if URL not allowed
+			if !w.isUrlAllowed(fullURL) {
+				return
+			}
+
+			// Recursively scrape this URL and add to the main content if available
+			if nestedContent, err := w.scrapeLinkedPageWithDepthAndContent(fullURL, depth+1, mainContent); err == nil && nestedContent != nil {
+				// If we have a main content structure, add this to it for access by the chatbot
+				if mainContent != nil {
+					mainContent.LinkedContent[fullURL] = nestedContent
+				}
+			} else if err != nil {
+				// Log error but continue with other links
+				log.Printf("Failed to scrape nested link %s at depth %d: %v", fullURL, depth+1, err)
+			}
+		})
+	}
 
 	// Record successful linked page scraping
 	w.recordScrapedUrl(targetUrl, "linked", linkedContent.Title, true, nil, linkedContent.Relevance, linkedContent.ContentType)
@@ -984,81 +1034,6 @@ func (w *WebScraper) determineContentType(url string) string {
 //	return relevance
 //}
 
-func (w *WebScraper) scrapeFirstLevelLinks(doc *goquery.Document, linkedContent *LinkedPageContent) {
-	w.scrapeFirstLevelLinksWithDepth(doc, linkedContent, 0)
-}
-
-func (w *WebScraper) scrapeFirstLevelLinksWithDepth(doc *goquery.Document, linkedContent *LinkedPageContent, depth int) {
-	// Check if we can continue scraping deeper
-	if depth+1 >= w.maxScrapingDepth || !w.canScrapeMore() {
-		return
-	}
-	// Extract external links from the current page
-	var firstLevelLinks []FirstLevelLink
-	maxLinks := 1000 // Limit to prevent overwhelming data TODO: configure
-
-	var links []linkDscriptor
-	doc.Find("a[href]").Each(func(i int, s *goquery.Selection) {
-		href, exists := s.Attr("href")
-		if exists {
-			links = append(links, linkDscriptor{href, s.Text()})
-		}
-	})
-
-	for _, link := range links {
-		href := link.Href
-		if len(firstLevelLinks) >= maxLinks {
-			return
-		}
-
-		// Make URL absolute if relative
-		if strings.HasPrefix(href, "/") || strings.HasPrefix(href, "./") {
-			// TODO: fix an error here
-			href = w.resolveURL(linkedContent.URL, href)
-		}
-
-		// Skip if not HTTP/HTTPS
-		if !strings.HasPrefix(href, "http") {
-			continue
-		}
-
-		// Skip same domain as the current page
-		if w.isSameDomain(linkedContent.URL, href) {
-			continue
-		}
-
-		// Skip if not relevant
-		linkTitle := strings.TrimSpace(link.Text)
-		//relevance = w.calculateRelevance(href, linkTitle)
-		//
-		//if relevance < 6 { // Only include moderately relevant links
-		//	return
-		//}
-
-		// Skip if already visited
-		if w.isURLVisited(href) {
-			continue
-		}
-
-		// Try to scrape the first-level page with recursion
-		firstLevelContent := w.scrapeFirstLevelPageWithDepth(href, linkTitle, depth+1)
-		if firstLevelContent != nil {
-			firstLevelLinks = append(firstLevelLinks, *firstLevelContent)
-
-			// If we haven't reached max depth, recursively scrape this URL as a linked page
-			if depth+2 < w.maxScrapingDepth && !w.isURLVisited(href) {
-				if linkedPageContent, err := w.scrapeLinkedPageWithDepth(href, depth+1); err == nil && linkedPageContent != nil {
-					// Add any discovered links from this recursive scraping
-					// This enables true multi-level recursive discovery
-				}
-			}
-		}
-		// Note: scrapeFirstLevelPageWithDepth handles its own recording
-	}
-
-	linkedContent.FirstLevelLinks = firstLevelLinks
-}
-
 func (w *WebScraper) isSameDomain(url1, url2 string) bool {
 	// Simple domain comparison
 	if strings.Contains(url1, "github.com") && strings.Contains(url2, "github.com") {
@@ -1095,111 +1070,4 @@ func (w *WebScraper) parseHTMLFromURL(targetUrl string) (*goquery.Document, erro
 	}
 
 	return goquery.NewDocumentFromReader(resp.Body)
-}
-
-func (w *WebScraper) scrapeFirstLevelPage(targetUrl, title string) *FirstLevelLink {
-	return w.scrapeFirstLevelPageWithDepth(targetUrl, title, 0)
-}
-
-func (w *WebScraper) scrapeFirstLevelPageWithDepth(targetUrl, title string, depth int) *FirstLevelLink {
-	// Check limits - first level pages can be scraped at any depth under the limit
-	if depth >= w.maxScrapingDepth || !w.canScrapeMore() {
-		return nil
-	}
-	// Check if the URL is allowed to be scraped
-	if !w.isUrlAllowed(targetUrl) {
-		return nil // Silently skip disallowed URLs for first-level links
-	}
-
-	client := &http.Client{
-		Timeout: 10 * time.Second, // Shorter timeout for first-level links
-	}
-
-	req, err := http.NewRequest("GET", targetUrl, nil)
-	if err != nil {
-		w.recordScrapedUrl(targetUrl, "first_level", title, false, err, 0, "first_level")
-		return nil
-	}
-
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; PersonalProfileBot/1.0)")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		w.recordScrapedUrl(targetUrl, "first_level", title, false, err, 0, "first_level")
-		return nil
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		err := fmt.Errorf("HTTP %d", resp.StatusCode)
-		w.recordScrapedUrl(targetUrl, "first_level", title, false, err, 0, "first_level")
-		return nil
-	}
-
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
-	if err != nil {
-		w.recordScrapedUrl(targetUrl, "first_level", title, false, err, 0, "first_level")
-		return nil
-	}
-
-	firstLevelLink := &FirstLevelLink{
-		URL:         targetUrl,
-		Title:       title,
-		LastUpdated: time.Now(),
-	}
-
-	// If title is empty, try to extract from the page
-	if firstLevelLink.Title == "" {
-		firstLevelLink.Title = strings.TrimSpace(doc.Find("title").First().Text())
-	}
-
-	// Extract description
-	doc.Find("meta[name='description'], meta[property='og:description']").Each(func(i int, s *goquery.Selection) {
-		if desc, exists := s.Attr("content"); exists {
-			if firstLevelLink.Description == "" {
-				firstLevelLink.Description = desc
-			}
-		}
-	})
-
-	// Extract limited text content
-	var textParts []string
-	doc.Find("h1, h2, h3, p").Each(func(i int, s *goquery.Selection) {
-		if len(textParts) >= 5 { // Limit to 5 text elements
-			return
-		}
-		text := strings.TrimSpace(s.Text())
-		if text != "" && len(text) > w.minTextLength && len(text) < w.maxTextLength {
-			textParts = append(textParts, text)
-		}
-	})
-
-	firstLevelLink.Text = strings.Join(textParts, "\n\n")
-
-	// Limit total size
-	if len(firstLevelLink.Text) > 1000 {
-		firstLevelLink.Text = firstLevelLink.Text[:1000] + "..."
-	}
-
-	//firstLevelLink.Relevance = w.calculateRelevance(targetUrl, firstLevelLink.Title)
-
-	// Only return if there's meaningful content
-	if len(firstLevelLink.Text) > 50 || len(firstLevelLink.Description) > 20 {
-		// Record successful first-level page scraping
-		w.recordScrapedUrl(targetUrl, "first_level", firstLevelLink.Title, true, nil, firstLevelLink.Relevance, "first_level")
-		return firstLevelLink
-	}
-
-	// Record failed first-level page scraping (insufficient content)
-	w.recordScrapedUrl(targetUrl, "first_level", firstLevelLink.Title, false, fmt.Errorf("insufficient content"), 0, "first_level")
-	return nil
-}
-
-type linkDscriptor struct {
-	Href string
-	Text string
-}
-
-func (l linkDscriptor) String() string {
-	return fmt.Sprintf("Href: %s, Text: %s", l.Href, l.Text)
 }

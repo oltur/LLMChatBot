@@ -186,7 +186,7 @@ GET /health
 | `OLLAMA_MODEL` | AI model to use | `codellama:13b` |
 | `REFRESH_CONTENT` | Force refresh content on every request | `false` |
 | `MIN_TEXT_LENGTH` | Minimum text length for content scraping | `10` |
-| `MAX_TEXT_LENGTH` | Maximum text length for content scraping | `10000` |
+| `MAX_CONTENT_LENGTH` | Maximum text length for content scraping | `10000` |
 | `MAX_SCRAPING_DEPTH` | Maximum recursive scraping depth (1-10) | `2` |
 | `MAX_PAGES_PER_SESSION` | Maximum pages to scrape per session | `100` |
 | `ALLOWED_SCRAPING_URL_PATTERNS` | Comma-separated URL patterns for scraping | All URLs allowed |
@@ -205,7 +205,7 @@ GET /health
 
 - **Recursive depth**: Configurable via `MAX_SCRAPING_DEPTH` (default: 2, max: 10)
 - **Session limits**: `MAX_PAGES_PER_SESSION` prevents runaway scraping (default: 100)
-- **Text length filtering**: `MIN_TEXT_LENGTH` (default: 10) and `MAX_TEXT_LENGTH` (default: 10000)
+- **Text length filtering**: `MIN_TEXT_LENGTH` (default: 10) and `MAX_CONTENT_LENGTH` (default: 10000)
 - **Loop prevention**: URL normalization and visited tracking
 - **First-level links per profile**: 5 (prevents overwhelming data)
 - **Minimum relevance threshold**: 6/10 (ensures quality)

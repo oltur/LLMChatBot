@@ -35,7 +35,7 @@ LLMChatBot/
 - `ENABLE_INTERNAL_LINK_SCRAPING`: Set to "true" to enable scraping of internal navigation links, not just external professional links (default: false)
 - `REFRESH_CONTENT`: Set to "true" to force refresh of scraped content on every request, "false" to use cached content from disk (default: false for speed)
 - `MIN_TEXT_LENGTH`: Minimum length of text fragments to include during scraping (default: 10 characters)
-- `MAX_TEXT_LENGTH`: Maximum length of text fragments to include during scraping (default: 10000 characters)
+- `MAX_CONTENT_LENGTH`: Maximum length of text fragments to include during scraping (default: 10000 characters)
 - `MAX_SCRAPING_DEPTH`: How many levels deep to recursively follow links (default: 2, max: 10)
 - `MAX_PAGES_PER_SESSION`: Safety limit for maximum pages scraped in one session (default: 100)
 
@@ -69,9 +69,8 @@ The application automatically saves scraped content to the `scraped_content/` di
   - Level 6-10: Deep scraping (use with caution, can be very slow)
   - **Loop Protection**: URL normalization and visited tracking prevents infinite loops
 - **Session Limits**: `MAX_PAGES_PER_SESSION` prevents runaway scraping
-- **Text Filtering**: Control text fragment size with `MIN_TEXT_LENGTH` and `MAX_TEXT_LENGTH`
+- **Text Filtering**: Control text fragment size with `MIN_TEXT_LENGTH`
   - `MIN_TEXT_LENGTH` (default: 10): Higher values reduce noise, lower values capture more detail
-  - `MAX_TEXT_LENGTH` (default: 10000): Higher values capture more content, lower values focus on concise text
   - Both settings affect all text extraction: main pages, external profiles, and linked content
   - Recommended ranges: MIN (5-30), MAX (1000-50000) depending on content type
 

@@ -14,7 +14,8 @@
       "Bash(zip:*)",
       "Bash(touch:*)",
       "Bash(WEBSITE_URL=https://webscraper.io/test-sites/e-commerce/static REFRESH_CONTENT=true ./turevskiy-chatbot)",
-      "Bash(WEBSITE_URL=https://webscraper.io/test-sites/e-commerce/static REFRESH_CONTENT=true PORT=3009 ./turevskiy-chatbot)"
+      "Bash(WEBSITE_URL=https://webscraper.io/test-sites/e-commerce/static REFRESH_CONTENT=true PORT=3009 ./turevskiy-chatbot)",
+      "Bash(WEBSITE_URL=https://webscraper.io/test-sites/e-commerce/static REFRESH_CONTENT=true PORT=3010 ./turevskiy-chatbot)"
     ],
     "deny": [],
     "ask": []
