@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"baliance.com/gooxml/document"
 	"github.com/tealeg/xlsx/v3"
-	"github.com/unidoc/unioffice/document"
 )
 
 type FileParser struct {
@@ -151,7 +151,6 @@ func (p *FileParser) parseDOCX(reader io.Reader, fileName string) (*FileContent,
 	if err != nil {
 		return nil, fmt.Errorf("failed to open DOCX file: %v", err)
 	}
-	defer doc.Close()
 
 	content := &FileContent{
 		FileName:    fileName,
