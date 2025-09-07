@@ -38,6 +38,7 @@ LLMChatBot/
 - `MAX_CONTENT_LENGTH`: Maximum length of text fragments to include during scraping (default: 10000 characters)
 - `MAX_SCRAPING_DEPTH`: How many levels deep to recursively follow links (default: 2, max: 10)
 - `MAX_PAGES_PER_SESSION`: Safety limit for maximum pages scraped in one session (default: 100)
+- `CACHE_DURATION_HOURS`: How long to keep cached content before refreshing (default: 24 hours)
 
 ## Features
 - Enhanced web scraping for comprehensive profile information

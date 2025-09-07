@@ -143,7 +143,9 @@ CV Content:
 
 User Question: %s
 
-Please analyze the CV content and provide a comprehensive answer. Focus on extracting relevant information about skills, experience, education, and achievements.`, content, question)
+Please analyze the CV content and provide a comprehensive answer. 
+Focus on extracting relevant information about skills, experience, education, and achievements.
+`, content, question)
 
 	return s.generateResponse(prompt)
 }
@@ -224,12 +226,12 @@ func (s *OllamaService) GenerateIntelligentResponse(websiteContent *WebsiteConte
 		if websiteContent.Text != "" {
 			contentBuilder.WriteString("MAIN WEBSITE CONTENT:\n")
 
-			content, err := s.SummarizeContent("main page", websiteContent.Text)
-			if err != nil {
-				return "", fmt.Errorf("failed to summarize content: %v", err)
-			}
-			contentBuilder.WriteString(content)
-			//contentBuilder.WriteString(websiteContent.Text)
+			//content, err := s.SummarizeContent("main page", websiteContent.Text)
+			//if err != nil {
+			//	return "", fmt.Errorf("failed to summarize content: %v", err)
+			//}
+			//contentBuilder.WriteString(content)
+			contentBuilder.WriteString(websiteContent.Text)
 
 			contentBuilder.WriteString("\n\n")
 		}
@@ -275,12 +277,12 @@ func (s *OllamaService) GenerateIntelligentResponse(websiteContent *WebsiteConte
 				if linkedContent.Text != "" {
 					contentBuilder.WriteString("Content:\n")
 
-					content, err := s.SummarizeContent(url, linkedContent.Text)
-					if err != nil {
-						return "", fmt.Errorf("failed to summarize content: %v", err)
-					}
-					contentBuilder.WriteString(content)
-					//contentBuilder.WriteString(linkedContent.Text)
+					//content, err := s.SummarizeContent(url, linkedContent.Text)
+					//if err != nil {
+					//	return "", fmt.Errorf("failed to summarize content: %v", err)
+					//}
+					//contentBuilder.WriteString(content)
+					contentBuilder.WriteString(linkedContent.Text)
 
 					contentBuilder.WriteString("\n")
 				}
@@ -297,12 +299,12 @@ func (s *OllamaService) GenerateIntelligentResponse(websiteContent *WebsiteConte
 							contentBuilder.WriteString(fmt.Sprintf("    Relevance: %d/10\n", firstLevel.Relevance))
 						}
 						if firstLevel.Text != "" {
-							content, err := s.SummarizeContent(firstLevel.URL, firstLevel.Text)
-							if err != nil {
-								return "", fmt.Errorf("failed to summarize content: %v", err)
-							}
-							contentBuilder.WriteString(fmt.Sprintf("    Content Summary: %s\n", content))
-							//contentBuilder.WriteString(fmt.Sprintf("    Content Summary: %s\n", firstLevel.Text))
+							//content, err := s.SummarizeContent(firstLevel.URL, firstLevel.Text)
+							//if err != nil {
+							//	return "", fmt.Errorf("failed to summarize content: %v", err)
+							//}
+							//contentBuilder.WriteString(fmt.Sprintf("    Content Summary: %s\n", content))
+							contentBuilder.WriteString(fmt.Sprintf("    Content Summary: %s\n", firstLevel.Text))
 
 						}
 					}
@@ -381,6 +383,7 @@ INSTRUCTIONS:
 3. For file content (XLSX/DOCX/CSV/PDF), utilize structured data, metadata, and extracted information
 4. Be conversational, detailed, and cite sources with their relevance when helpful
 5. If information is limited, clearly state what's not available and suggest checking specific high-relevance sources
+6. Think tree times and provide the best possible answer.
 
 Provide a thorough response.`, cb, userMessage)
 

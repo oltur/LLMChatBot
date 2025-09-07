@@ -40,6 +40,8 @@ type WebScraper struct {
 	maxPagesPerSession  int
 	scrapedPagesCount   int
 	ollamaService       *OllamaService
+	cacheDuration       time.Duration
+	memoryCacheDuration time.Duration
 }
 
 type ScrapedUrl struct {
@@ -148,6 +150,23 @@ func NewWebScraper(ollamaService *OllamaService) *WebScraper {
 		}
 	}
 
+	// Parse cache duration (default: 24 hours)
+	cacheDuration := 24 * time.Hour
+	if cacheDurationStr := os.Getenv("CACHE_DURATION_HOURS"); cacheDurationStr != "" {
+		if parsed, err := strconv.Atoi(cacheDurationStr); err == nil && parsed > 0 {
+			cacheDuration = time.Duration(parsed) * time.Hour
+		}
+	}
+
+	// Memory cache duration (use shorter duration, typically 1 hour or 1/24 of cache duration)
+	memoryCacheDuration := 1 * time.Hour
+	if cacheDuration < 24*time.Hour {
+		memoryCacheDuration = cacheDuration / 24
+		if memoryCacheDuration < 15*time.Minute {
+			memoryCacheDuration = 15 * time.Minute
+		}
+	}
+
 	// Create cache directory
 	cacheDir := "scraped_content"
 	if err := os.MkdirAll(cacheDir, 0755); err != nil {
@@ -175,6 +194,8 @@ func NewWebScraper(ollamaService *OllamaService) *WebScraper {
 		maxPagesPerSession:  maxPagesPerSession,
 		scrapedPagesCount:   0,
 		ollamaService:       ollamaService,
+		cacheDuration:       cacheDuration,
+		memoryCacheDuration: memoryCacheDuration,
 	}
 }
 
@@ -569,8 +590,8 @@ func (w *WebScraper) scrapeWebsiteWithDepth(targetUrl string, depth int) (*Websi
 	// Try to load from disk first if refresh is not enabled
 	if !w.refreshContent {
 		if diskContent, err := w.loadContentFromDisk(targetUrl); err == nil {
-			// Check if disk content is not too old (24 hours)
-			if time.Since(diskContent.LastUpdated) < 24*time.Hour {
+			// Check if disk content is not too old
+			if time.Since(diskContent.LastUpdated) < w.cacheDuration {
 				w.recordScrapedUrl(targetUrl, "main", diskContent.Title, true, nil, 0, "disk_cached")
 				w.cache[targetUrl] = *diskContent
 				return diskContent, nil
@@ -580,7 +601,7 @@ func (w *WebScraper) scrapeWebsiteWithDepth(targetUrl string, depth int) (*Websi
 
 	// Check memory cache
 	if cached, exists := w.cache[targetUrl]; exists {
-		if time.Since(cached.LastUpdated) < 1*time.Hour {
+		if time.Since(cached.LastUpdated) < w.memoryCacheDuration {
 			w.recordScrapedUrl(targetUrl, "main", cached.Title, true, nil, 0, "memory_cached")
 			return &cached, nil
 		}
@@ -642,15 +663,13 @@ func (w *WebScraper) scrapeWebsiteWithDepth(targetUrl string, depth int) (*Websi
 		}
 	})
 
-	// Extract comprehensive text content
-	var textParts []string
-	doc.Find("p, h1, h2, h3, h4, h5, h6, article, section, div.content, div.main").Each(func(i int, s *goquery.Selection) {
-		text := strings.TrimSpace(s.Text())
-		if text != "" && len(text) > w.minTextLength { // Filter out very short text
-			textParts = append(textParts, text)
-		}
+	var b strings.Builder
+	b.Grow(10000) // Preallocate to avoid multiple allocations
+	doc.Find("body").Each(func(i int, s *goquery.Selection) {
+		walk(&b, s.Nodes[0], 0)
 	})
-	fullText := strings.Join(textParts, "\n\n")
+
+	fullText := b.String()
 
 	// Use Ollama to summarize the content if service is available
 	if w.ollamaService != nil && w.ollamaService.IsEnabled() && fullText != "" {
@@ -712,7 +731,7 @@ func (w *WebScraper) processPDFs(content *WebsiteContent, baseURL string) {
 			fullURL := w.resolveURL(baseURL, link.URL)
 
 			if cached, exists := w.pdfCache[fullURL]; exists {
-				if time.Since(cached.LastUpdated) < 24*time.Hour {
+				if time.Since(cached.LastUpdated) < w.cacheDuration {
 					content.PDFContent[link.URL] = cached
 					continue
 				}
@@ -737,7 +756,7 @@ func (w *WebScraper) processFiles(content *WebsiteContent, baseURL string) {
 			fullURL := w.resolveURL(baseURL, link.URL)
 
 			if cached, exists := w.fileCache[fullURL]; exists {
-				if time.Since(cached.LastUpdated) < 24*time.Hour {
+				if time.Since(cached.LastUpdated) < w.cacheDuration {
 					content.FileContent[link.URL] = cached
 					continue
 				}
@@ -1119,7 +1138,7 @@ func walk(b *strings.Builder, n *html.Node, indent int) {
 		// If the element has text, print it
 		text := strings.TrimSpace(goquery.NewDocumentFromNode(n).Text())
 		if text != "" {
-			b.WriteString(fmt.Sprintf("%s\n", text))
+			b.WriteString(fmt.Sprintf(" %s\n", text))
 			//b.WriteString(fmt.Sprintf("%s%s\n", strings.Repeat(" ", indent), text))
 			//b.WriteString(fmt.Sprintf("%s[%s] %s\n", strings.Repeat("  ", indent), tag, text))
 		}
