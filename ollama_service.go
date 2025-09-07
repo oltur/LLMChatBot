@@ -207,6 +207,8 @@ func (s *OllamaService) GenerateIntelligentResponse(websiteContent *WebsiteConte
 		return "", fmt.Errorf("Ollama service is not available - ensure Ollama is running with %s model", s.model)
 	}
 
+	fmt.Printf("Generating response for user message: %s\n", userMessage)
+
 	var contentBuilder strings.Builder
 
 	if websiteContent != nil {
@@ -221,7 +223,14 @@ func (s *OllamaService) GenerateIntelligentResponse(websiteContent *WebsiteConte
 		}
 		if websiteContent.Text != "" {
 			contentBuilder.WriteString("MAIN WEBSITE CONTENT:\n")
-			contentBuilder.WriteString(websiteContent.Text)
+
+			content, err := s.SummarizeContent("main page", websiteContent.Text)
+			if err != nil {
+				return "", fmt.Errorf("failed to summarize content: %v", err)
+			}
+			contentBuilder.WriteString(content)
+			//contentBuilder.WriteString(websiteContent.Text)
+
 			contentBuilder.WriteString("\n\n")
 		}
 
@@ -234,14 +243,14 @@ func (s *OllamaService) GenerateIntelligentResponse(websiteContent *WebsiteConte
 			contentBuilder.WriteString("\n")
 		}
 
-		// Include all website links with descriptions
-		if len(websiteContent.Links) > 0 {
-			contentBuilder.WriteString("PROFESSIONAL LINKS AND PROFILES:\n")
-			for _, link := range websiteContent.Links {
-				contentBuilder.WriteString(fmt.Sprintf("- %s: %s (Type: %s)\n", link.Title, link.URL, link.Type))
-			}
-			contentBuilder.WriteString("\n")
-		}
+		//// Include all website links with descriptions
+		//if len(websiteContent.Links) > 0 {
+		//	contentBuilder.WriteString("PROFESSIONAL LINKS AND PROFILES:\n")
+		//	for _, link := range websiteContent.Links {
+		//		contentBuilder.WriteString(fmt.Sprintf("- %s: %s (Type: %s)\n", link.Title, link.URL, link.Type))
+		//	}
+		//	contentBuilder.WriteString("\n")
+		//}
 
 		// Include linked content from professional profiles
 		if len(websiteContent.LinkedContent) > 0 {
@@ -265,11 +274,18 @@ func (s *OllamaService) GenerateIntelligentResponse(websiteContent *WebsiteConte
 				}
 				if linkedContent.Text != "" {
 					contentBuilder.WriteString("Content:\n")
-					contentBuilder.WriteString(linkedContent.Text)
+
+					content, err := s.SummarizeContent(url, linkedContent.Text)
+					if err != nil {
+						return "", fmt.Errorf("failed to summarize content: %v", err)
+					}
+					contentBuilder.WriteString(content)
+					//contentBuilder.WriteString(linkedContent.Text)
+
 					contentBuilder.WriteString("\n")
 				}
 
-				// Include first-level linked content
+				// Include linked content
 				if len(linkedContent.FirstLevelLinks) > 0 {
 					contentBuilder.WriteString("FIRST-LEVEL LINKED CONTENT:\n")
 					for _, firstLevel := range linkedContent.FirstLevelLinks {
@@ -281,7 +297,13 @@ func (s *OllamaService) GenerateIntelligentResponse(websiteContent *WebsiteConte
 							contentBuilder.WriteString(fmt.Sprintf("    Relevance: %d/10\n", firstLevel.Relevance))
 						}
 						if firstLevel.Text != "" {
-							contentBuilder.WriteString(fmt.Sprintf("    Content Summary: %s\n", firstLevel.Text))
+							content, err := s.SummarizeContent(firstLevel.URL, firstLevel.Text)
+							if err != nil {
+								return "", fmt.Errorf("failed to summarize content: %v", err)
+							}
+							contentBuilder.WriteString(fmt.Sprintf("    Content Summary: %s\n", content))
+							//contentBuilder.WriteString(fmt.Sprintf("    Content Summary: %s\n", firstLevel.Text))
+
 						}
 					}
 					contentBuilder.WriteString("\n")
@@ -323,7 +345,9 @@ func (s *OllamaService) GenerateIntelligentResponse(websiteContent *WebsiteConte
 					}
 				}
 				contentBuilder.WriteString("Content:\n")
+
 				contentBuilder.WriteString(file.Text)
+
 				contentBuilder.WriteString(fmt.Sprintf("\n--- END %s FILE ---\n\n", strings.ToUpper(file.FileType)))
 			}
 		}
@@ -342,12 +366,8 @@ func (s *OllamaService) GenerateIntelligentResponse(websiteContent *WebsiteConte
 	}
 
 	prompt := fmt.Sprintf(`You are an intelligent assistant with comprehensive information about this website. You have access to:
-- His main website content and metadata
-- Full CV/resume documents with detailed professional information
-- Content from external professional profiles (GitHub, LinkedIn, etc.)
-- First-level linked pages from external profiles with relevance scoring
-- All professional links and social profiles
-- Complete biographical and career information with content type classification
+- Main website content and metadata
+- Linked pages from external profiles with relevance scoring
 - Parsed file documents (PDF, XLSX, DOCX, CSV) with structured data and metadata
 
 COMPREHENSIVE DATA AVAILABLE:
@@ -356,15 +376,52 @@ COMPREHENSIVE DATA AVAILABLE:
 USER QUESTION: %s
 
 INSTRUCTIONS:
-1. Answer using available information from providede COMPREHENSIVE DATA AVAILABLE
-2. Provide specific details from any relevant source, considering relevance scores (higher scores = more reliable)
-3. Cross-reference information across sources and first-level links for comprehensive answers
-4. For file content (XLSX/DOCX/CSV/PDF), utilize structured data, metadata, and extracted information
-5. Be conversational, detailed, and cite sources with their relevance when helpful
-6. Use linked content to provide deeper insights into projects, articles, and professional work
-7. If information is limited, clearly state what's not available and suggest checking specific high-relevance sources
+1. Answer using information provided in this prompt only. Do not use external data. Do not make up answers."
+2. Cross-reference information across datalinks for comprehensive answers
+3. For file content (XLSX/DOCX/CSV/PDF), utilize structured data, metadata, and extracted information
+4. Be conversational, detailed, and cite sources with their relevance when helpful
+5. If information is limited, clearly state what's not available and suggest checking specific high-relevance sources
 
-Provide a thorough response using the comprehensive data available above.`, cb, userMessage)
+Provide a thorough response.`, cb, userMessage)
+
+	return s.generateResponse(prompt)
+}
+
+func (s *OllamaService) SummarizeContent(title, content string) (string, error) {
+	if !s.IsEnabled() {
+		return "", fmt.Errorf("Ollama service is not available - ensure Ollama is running with %s model", s.model)
+	}
+
+	fmt.Printf("Summarizing content for %s\n", title)
+
+	if content == "" {
+		return "", fmt.Errorf("no content provided")
+	}
+
+	// Compile regex: one or more whitespace chars
+	re := regexp.MustCompile(`\s+`)
+
+	// Replace with single space
+	content = re.ReplaceAllString(content, " ")
+
+	// Limit content size to avoid overwhelming the AI TODO: configure
+	if len(content) > s.maxTotalContentLength {
+		content = content[:s.maxTotalContentLength] + "..."
+	}
+
+	prompt := fmt.Sprintf(`You are an AI assistant analyzing a web page content. 
+
+TITLE:
+%s
+
+CONTENT:
+%s
+
+INSTRUCTIONS:
+1. Analyze the provided title and content
+2. Provide relevant summary under 1000 characters based on the content
+
+Please provide an extended comprehensive summary based on the web page content above, to be used in further LLM analysis.`, content)
 
 	return s.generateResponse(prompt)
 }

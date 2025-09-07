@@ -684,10 +684,17 @@ func (w *WebScraper) processLinkedContentWithDepth(content *WebsiteContent, base
 		}
 
 		if shouldProcess {
-			linkedContent, err := w.scrapeLinkedPageWithDepthAndContent(fullURL, depth+1, content)
-			if err == nil && linkedContent != nil {
-				content.LinkedContent[fullURL] = linkedContent
+			_, err := w.scrapeLinkedPageWithDepthAndContent(fullURL, depth+1, content)
+			if err != nil {
+				// Log error but continue processing other links
+				fmt.Printf("Warning: Failed to scrape linked page %s: %v\n", fullURL, err)
 			}
+
+			//linkedContent, err := w.scrapeLinkedPageWithDepthAndContent(fullURL, depth+1, content)
+			//if err == nil && linkedContent != nil {
+			//	content.LinkedContent[fullURL] = linkedContent
+			//}
+
 			// Note: scrapeLinkedPageWithDepth handles its own recording and recursion
 		}
 	}
@@ -854,27 +861,28 @@ func (w *WebScraper) scrapeLinkedPageWithDepthAndContent(targetUrl string, depth
 		}
 	})
 
-	//// Extract text content based on the platform
-	//if strings.Contains(targetUrl, "github.com") {
-	//	// GitHub profile/repo specific selectors
-	//	var textParts []string
-	//	doc.Find(".user-profile-bio, .repository-description, .markdown-body, .readme").Each(func(i int, s *goquery.Selection) {
-	//		text := strings.TrimSpace(s.Text())
-	//		if text != "" && len(text) > w.minTextLength {
-	//			textParts = append(textParts, text)
-	//		}
-	//	})
-	//	linkedContent.Text = strings.Join(textParts, "\n\n")
-	//} else if strings.Contains(targetUrl, "linkedin.com") {
-	//	// LinkedIn specific selectors (limited due to auth requirements)
-	//	var textParts []string
-	//	doc.Find(".pv-about-section, .summary, .experience").Each(func(i int, s *goquery.Selection) {
-	//		text := strings.TrimSpace(s.Text())
-	//		if text != "" && len(text) > w.minTextLength {
-	//			textParts = append(textParts, text)
-	//		}
-	//	})
-	//	linkedContent.Text = strings.Join(textParts, "\n\n")
+	// Extract text content based on the platform
+	if strings.Contains(targetUrl, "github.com") {
+		// GitHub profile/repo specific selectors
+		var textParts []string
+		doc.Find(".user-profile-bio, .repository-description, .markdown-body, .readme").Each(func(i int, s *goquery.Selection) {
+			text := strings.TrimSpace(s.Text())
+			if text != "" && len(text) > w.minTextLength {
+				textParts = append(textParts, text)
+			}
+		})
+		linkedContent.Text = strings.Join(textParts, "\n\n")
+	} else if strings.Contains(targetUrl, "linkedin.com") {
+		// LinkedIn specific selectors (limited due to auth requirements)
+		var textParts []string
+		doc.Find(".pv-about-section, .summary, .experience").Each(func(i int, s *goquery.Selection) {
+			text := strings.TrimSpace(s.Text())
+			if text != "" && len(text) > w.minTextLength {
+				textParts = append(textParts, text)
+			}
+		})
+		linkedContent.Text = strings.Join(textParts, "\n\n")
+	}
 	//} else {
 	//	// General content extraction
 	//	//var textParts []string
@@ -896,11 +904,12 @@ func (w *WebScraper) scrapeLinkedPageWithDepthAndContent(targetUrl string, depth
 
 	linkedContent.Text = b.String()
 
-	// Compile regex: one or more whitespace chars
-	re := regexp.MustCompile(`\s+`)
-
-	// Replace with single space
-	linkedContent.Text = re.ReplaceAllString(linkedContent.Text, " ")
+	// will be done later
+	//// Compile regex: one or more whitespace chars
+	//re := regexp.MustCompile(`\s+`)
+	//
+	//// Replace with single space
+	//linkedContent.Text = re.ReplaceAllString(linkedContent.Text, " ")
 
 	// Limit content size to avoid overwhelming the AI TODO: configure
 	if len(linkedContent.Text) > w.maxContentLength {
