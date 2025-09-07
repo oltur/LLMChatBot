@@ -77,8 +77,9 @@ func (c *Chatbot) generateResponse(message string) string {
 		fmt.Printf("Ollama service error: %v\n", err)
 	}
 
-	// Fallback to rule-based responses only if Ollama is not available
-	return c.getRuleBasedResponse(message)
+	return "Not available"
+	//	// Fallback to rule-based responses only if Ollama is not available
+	//	return c.getRuleBasedResponse(message)
 }
 
 func (c *Chatbot) getRuleBasedResponse(message string) string {

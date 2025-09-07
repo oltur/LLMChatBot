@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"golang.org/x/net/html"
 )
 
 type WebScraper struct {
@@ -771,6 +773,8 @@ func (w *WebScraper) scrapeLinkedPageWithDepth(targetUrl string, depth int) (*Li
 		return nil, fmt.Errorf("URL already visited: %s", targetUrl)
 	}
 
+	log.Printf("Scraping linked page (depth %d): %s\n", depth, targetUrl)
+
 	// Mark URL as visited
 	w.markURLVisited(targetUrl)
 	w.scrapedPagesCount++
@@ -845,42 +849,51 @@ func (w *WebScraper) scrapeLinkedPageWithDepth(targetUrl string, depth int) (*Li
 		}
 	})
 
-	// Extract text content based on the platform
-	if strings.Contains(targetUrl, "github.com") {
-		// GitHub profile/repo specific selectors
-		var textParts []string
-		doc.Find(".user-profile-bio, .repository-description, .markdown-body, .readme").Each(func(i int, s *goquery.Selection) {
-			text := strings.TrimSpace(s.Text())
-			if text != "" && len(text) > w.minTextLength {
-				textParts = append(textParts, text)
-			}
-		})
-		linkedContent.Text = strings.Join(textParts, "\n\n")
-	} else if strings.Contains(targetUrl, "linkedin.com") {
-		// LinkedIn specific selectors (limited due to auth requirements)
-		var textParts []string
-		doc.Find(".pv-about-section, .summary, .experience").Each(func(i int, s *goquery.Selection) {
-			text := strings.TrimSpace(s.Text())
-			if text != "" && len(text) > w.minTextLength {
-				textParts = append(textParts, text)
-			}
-		})
-		linkedContent.Text = strings.Join(textParts, "\n\n")
-	} else {
-		// General content extraction
-		var textParts []string
-		doc.Find("p, h1, h2, h3, article, .content, .main, .bio, .about, .description").Each(func(i int, s *goquery.Selection) {
-			text := strings.TrimSpace(s.Text())
-			if text != "" && len(text) > w.minTextLength && len(text) < 1000 { // Reasonable text length
-				textParts = append(textParts, text)
-			}
-		})
-		linkedContent.Text = strings.Join(textParts, "\n\n")
-	}
+	//// Extract text content based on the platform
+	//if strings.Contains(targetUrl, "github.com") {
+	//	// GitHub profile/repo specific selectors
+	//	var textParts []string
+	//	doc.Find(".user-profile-bio, .repository-description, .markdown-body, .readme").Each(func(i int, s *goquery.Selection) {
+	//		text := strings.TrimSpace(s.Text())
+	//		if text != "" && len(text) > w.minTextLength {
+	//			textParts = append(textParts, text)
+	//		}
+	//	})
+	//	linkedContent.Text = strings.Join(textParts, "\n\n")
+	//} else if strings.Contains(targetUrl, "linkedin.com") {
+	//	// LinkedIn specific selectors (limited due to auth requirements)
+	//	var textParts []string
+	//	doc.Find(".pv-about-section, .summary, .experience").Each(func(i int, s *goquery.Selection) {
+	//		text := strings.TrimSpace(s.Text())
+	//		if text != "" && len(text) > w.minTextLength {
+	//			textParts = append(textParts, text)
+	//		}
+	//	})
+	//	linkedContent.Text = strings.Join(textParts, "\n\n")
+	//} else {
+	//	// General content extraction
+	//	//var textParts []string
+	//	//doc.Find("p, h1, h2, h3, article, .content, .main, .bio, .about, .description").Each(func(i int, s *goquery.Selection) {
+	//	//	text := strings.TrimSpace(s.Text())
+	//	//	if text != "" && len(text) > w.minTextLength && len(text) < 1000 { // Reasonable text length
+	//	//		textParts = append(textParts, text)
+	//	//	}
+	//	//})
+	//	//linkedContent.Text = strings.Join(textParts, "\n\n")
+	//	linkedContent.Text = doc.Text()
+	//}
 
-	// Limit content size to avoid overwhelming the AI
-	if len(linkedContent.Text) > 2000 {
-		linkedContent.Text = linkedContent.Text[:2000] + "..."
+	var b strings.Builder
+	b.Grow(10000) // Preallocate to avoid multiple allocations
+	doc.Find("body").Each(func(i int, s *goquery.Selection) {
+		walk(&b, s.Nodes[0], 0)
+	})
+
+	linkedContent.Text = b.String()
+
+	// Limit content size to avoid overwhelming the AI TODO: configure
+	if len(linkedContent.Text) > 10000 {
+		linkedContent.Text = linkedContent.Text[:10000] + "..."
 	}
 
 	// Scrape first-level external links with depth awareness
@@ -892,6 +905,28 @@ func (w *WebScraper) scrapeLinkedPageWithDepth(targetUrl string, depth int) (*Li
 	return linkedContent, nil
 }
 
+func walk(b *strings.Builder, n *html.Node, indent int) {
+	if n.Type == html.ElementNode {
+		tag := n.Data
+
+		// Skip script/style
+		if tag == "script" || tag == "style" || tag == "noscript" || tag == "frame" || tag == "iframe" || tag == "a" {
+			return
+		}
+
+		// If the element has text, print it
+		text := strings.TrimSpace(goquery.NewDocumentFromNode(n).Text())
+		if text != "" {
+			b.WriteString(fmt.Sprintf("%s%s\n", strings.Repeat(" ", indent), text))
+			//b.WriteString(fmt.Sprintf("%s[%s] %s\n", strings.Repeat("  ", indent), tag, text))
+		}
+
+		// Recurse into children
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(b, c, indent+1)
+		}
+	}
+}
 func (w *WebScraper) determineContentType(url string) string {
 	lowerURL := strings.ToLower(url)
 
@@ -962,13 +997,17 @@ func (w *WebScraper) scrapeFirstLevelLinksWithDepth(doc *goquery.Document, linke
 	var firstLevelLinks []FirstLevelLink
 	maxLinks := 1000 // Limit to prevent overwhelming data TODO: configure
 
+	var links []linkDscriptor
 	doc.Find("a[href]").Each(func(i int, s *goquery.Selection) {
-		if len(firstLevelLinks) >= maxLinks {
-			return
-		}
-
 		href, exists := s.Attr("href")
-		if !exists {
+		if exists {
+			links = append(links, linkDscriptor{href, s.Text()})
+		}
+	})
+
+	for _, link := range links {
+		href := link.Href
+		if len(firstLevelLinks) >= maxLinks {
 			return
 		}
 
@@ -980,16 +1019,16 @@ func (w *WebScraper) scrapeFirstLevelLinksWithDepth(doc *goquery.Document, linke
 
 		// Skip if not HTTP/HTTPS
 		if !strings.HasPrefix(href, "http") {
-			return
+			continue
 		}
 
 		// Skip same domain as the current page
 		if w.isSameDomain(linkedContent.URL, href) {
-			return
+			continue
 		}
 
 		// Skip if not relevant
-		linkTitle := strings.TrimSpace(s.Text())
+		linkTitle := strings.TrimSpace(link.Text)
 		//relevance = w.calculateRelevance(href, linkTitle)
 		//
 		//if relevance < 6 { // Only include moderately relevant links
@@ -998,7 +1037,7 @@ func (w *WebScraper) scrapeFirstLevelLinksWithDepth(doc *goquery.Document, linke
 
 		// Skip if already visited
 		if w.isURLVisited(href) {
-			return
+			continue
 		}
 
 		// Try to scrape the first-level page with recursion
@@ -1015,7 +1054,7 @@ func (w *WebScraper) scrapeFirstLevelLinksWithDepth(doc *goquery.Document, linke
 			}
 		}
 		// Note: scrapeFirstLevelPageWithDepth handles its own recording
-	})
+	}
 
 	linkedContent.FirstLevelLinks = firstLevelLinks
 }
@@ -1154,4 +1193,13 @@ func (w *WebScraper) scrapeFirstLevelPageWithDepth(targetUrl, title string, dept
 	// Record failed first-level page scraping (insufficient content)
 	w.recordScrapedUrl(targetUrl, "first_level", firstLevelLink.Title, false, fmt.Errorf("insufficient content"), 0, "first_level")
 	return nil
+}
+
+type linkDscriptor struct {
+	Href string
+	Text string
+}
+
+func (l linkDscriptor) String() string {
+	return fmt.Sprintf("Href: %s, Text: %s", l.Href, l.Text)
 }

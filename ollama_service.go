@@ -198,7 +198,7 @@ func (s *OllamaService) GenerateIntelligentResponse(websiteContent *WebsiteConte
 	var contentBuilder strings.Builder
 
 	if websiteContent != nil {
-		contentBuilder.WriteString("=== COMPREHENSIVE PROFILE ===\n\n")
+		//contentBuilder.WriteString("=== COMPREHENSIVE PROFILE ===\n\n")
 
 		// Include main website content
 		if websiteContent.Title != "" {
@@ -324,7 +324,7 @@ func (s *OllamaService) GenerateIntelligentResponse(websiteContent *WebsiteConte
 - First-level linked pages from external profiles with relevance scoring
 - All professional links and social profiles
 - Complete biographical and career information with content type classification
-- Parsed file documents (XLSX, DOCX, CSV) with structured data and metadata
+- Parsed file documents (PDF, XLSX, DOCX, CSV) with structured data and metadata
 
 COMPREHENSIVE DATA AVAILABLE:
 %s
@@ -332,17 +332,13 @@ COMPREHENSIVE DATA AVAILABLE:
 USER QUESTION: %s
 
 INSTRUCTIONS:
-1. Answer using ALL available information including main website, external profiles, CV documents, and first-level linked content
+1. Answer using available information from main website and linked content
 2. Provide specific details from any relevant source, considering relevance scores (higher scores = more reliable)
 3. Cross-reference information across sources and first-level links for comprehensive answers
-4. For skills/experience questions, use CV content, profile information, AND linked project pages
-5. For contact/social info, reference the professional links and their content types
-6. For projects/code, utilize GitHub/GitLab profiles AND their first-level linked repositories/projects
-7. Pay attention to content types (professional, blog, project, technical) when providing answers
-8. For file content (XLSX/DOCX/CSV), utilize structured data, metadata, and extracted information
-9. Be conversational, detailed, and cite sources with their relevance when helpful
-10. Use first-level linked content to provide deeper insights into projects, articles, and professional work
-11. If information is limited, clearly state what's not available and suggest checking specific high-relevance sources
+4. For file content (XLSX/DOCX/CSV/PDF), utilize structured data, metadata, and extracted information
+5. Be conversational, detailed, and cite sources with their relevance when helpful
+6. Use linked content to provide deeper insights into projects, articles, and professional work
+7. If information is limited, clearly state what's not available and suggest checking specific high-relevance sources
 
 Provide a thorough response using the comprehensive data available above.`, contentBuilder.String(), userMessage)
 

@@ -34,6 +34,9 @@ func NewServer(chatbot *Chatbot) *Server {
 
 func (s *Server) SetupRoutes(r *mux.Router) {
 	r.HandleFunc("/", s.serveIndex).Methods("GET")
+	r.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "static/favicon.ico")
+	})
 	r.HandleFunc("/chat", s.handleChat).Methods("POST")
 	r.HandleFunc("/health", s.handleHealth).Methods("GET")
 
