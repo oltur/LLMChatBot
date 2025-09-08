@@ -20,10 +20,18 @@ type OllamaService struct {
 	client                *http.Client
 }
 
+type OllamaOptions struct {
+	Seed        int     `json:"seed"`
+	Temperature float64 `json:"temperature"`
+	NumCtx      int     `json:"num_ctx"`
+	NumPredict  int     `json:"num_predict"`
+}
+
 type OllamaRequest struct {
-	Model  string `json:"model"`
-	Prompt string `json:"prompt"`
-	Stream bool   `json:"stream"`
+	Model   string         `json:"model"`
+	Prompt  string         `json:"prompt"`
+	Stream  bool           `json:"stream"`
+	Options *OllamaOptions `json:"options,omitempty"`
 }
 
 type OllamaResponse struct {
@@ -86,6 +94,12 @@ func (s *OllamaService) generateResponse(prompt string) (string, error) {
 		Model:  s.model,
 		Prompt: prompt,
 		Stream: false,
+		Options: &OllamaOptions{
+			Seed:        42,
+			Temperature: 0,
+			NumCtx:      4096,
+			NumPredict:  512,
+		},
 	}
 
 	jsonData, err := json.Marshal(reqBody)
@@ -105,12 +119,12 @@ func (s *OllamaService) generateResponse(prompt string) (string, error) {
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("Ollama API error: %v", err)
+		return "", fmt.Errorf("ollama API error: %v", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("Ollama API returned status code: %d", resp.StatusCode)
+		return "", fmt.Errorf("ollama API returned status code: %d", resp.StatusCode)
 	}
 
 	var ollamaResp OllamaResponse
@@ -383,7 +397,8 @@ INSTRUCTIONS:
 3. For file content (XLSX/DOCX/CSV/PDF), utilize structured data, metadata, and extracted information
 4. Be conversational, detailed, and cite sources with their relevance when helpful
 5. If information is limited, clearly state what's not available and suggest checking specific high-relevance sources
-6. Think tree times and provide the best possible answer.
+6. Think three times and provide the best possible answer.
+7. Do not hallucinte or fabricate information.
 
 Provide a thorough response.`, cb, userMessage)
 

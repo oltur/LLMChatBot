@@ -694,7 +694,8 @@ func (w *WebScraper) scrapeWebsiteWithDepth(targetUrl string, depth int) (*Websi
 		}
 	}
 
-	doc.Find("a[href]").Each(func(i int, s *goquery.Selection) {
+	hrefs := doc.Find("a[href]")
+	hrefs.Each(func(i int, s *goquery.Selection) {
 		if href, exists := s.Attr("href"); exists {
 			linkType := "internal"
 			if strings.HasPrefix(href, "http") {
@@ -833,7 +834,8 @@ func (w *WebScraper) processLinkedContentWithDepth(content *WebsiteContent, base
 	w.markURLVisited(baseURL)
 
 	// Process both professional links and internal navigation links
-	for _, link := range content.Links {
+	for i, link := range content.Links {
+		fmt.Printf("Processing link %d/%d: %s (type: %s)\n", i, len(content.Links), link.URL, link.Type)
 		shouldProcess := false
 		fullURL := link.URL
 
@@ -843,6 +845,10 @@ func (w *WebScraper) processLinkedContentWithDepth(content *WebsiteContent, base
 		} else if strings.HasPrefix(link.URL, "/") {
 			// Handle absolute paths that might be misclassified as external
 			fullURL = w.resolveURL(baseURL, link.URL)
+		}
+
+		if link.Type == "external" {
+			shouldProcess = true
 		}
 
 		// Check if it's a professional link (external profiles)
@@ -907,7 +913,7 @@ func (w *WebScraper) isInternalNavigationLink(fullUrl, linkType string) bool {
 	// Skip certain common non-content links
 	lowerUrl := strings.ToLower(fullUrl)
 	skipPatterns := []string{
-		"#", // anchor links
+		//"#", // anchor links
 		"mailto:",
 		"tel:",
 		"javascript:",
